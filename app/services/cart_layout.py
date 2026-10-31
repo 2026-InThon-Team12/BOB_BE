@@ -18,6 +18,7 @@ from app.services.ocr_layout import Line, money_values, normalized
 class CartCard:
     lines: list[Line]
     price: int | None
+    selected: bool = True
 
     def literal_title(self) -> str:
         """Keep evidence from this card when AI rewrites or borrows a name."""
@@ -64,7 +65,7 @@ def name_belongs_to_card(name: str, cards: list[CartCard], index: int) -> bool:
     return scores[index] >= 0.75 and scores[index] >= other + 0.15
 
 
-def selector_rows(image: Image.Image) -> list[int]:
+def cart_selectors(image: Image.Image) -> list[tuple[int, bool]]:
     with image.convert("L") as gray:
         gray.thumbnail((540, 5000))
         width, height = gray.size
@@ -107,7 +108,15 @@ def selector_rows(image: Image.Image) -> list[int]:
                     {a for a, b in points if b >= bottom - inset},
                 ]
                 if min(map(len, sides)) >= size * 0.8:
-                    boxes.append((left, top, size))
+                    # Inspect the centre, excluding the empty checkbox's border.
+                    pad = max(2, size // 4)
+                    centre = [
+                        pixels[a, b]
+                        for a in range(left + pad, right - pad + 1)
+                        for b in range(top + pad, bottom - pad + 1)
+                    ]
+                    selected = sum(value < 215 for value in centre) >= len(centre) * 0.12
+                    boxes.append((left, top, size, selected))
         # Require aligned, equally sized selectors; include checked AND unchecked.
         if len(boxes) < 2:
             return []
@@ -116,7 +125,11 @@ def selector_rows(image: Image.Image) -> list[int]:
         if len(group) < 2:
             return []
         scale = image.height / height
-        return sorted(round(top * scale) for _, top, _ in group)
+        return sorted((round(top * scale), selected) for _, top, _, selected in group)
+
+
+def selector_rows(image: Image.Image) -> list[int]:
+    return [top for top, _ in cart_selectors(image)]
 
 
 def _crossed_out(line: Line, image: Image.Image) -> bool:
@@ -134,12 +147,13 @@ def _crossed_out(line: Line, image: Image.Image) -> bool:
 
 
 def checkbox_cards(image: Image.Image, lines: list[Line]) -> list[CartCard]:
-    starts = selector_rows(image)
+    selectors = cart_selectors(image)
+    starts = [top for top, _ in selectors]
     if len(starts) < 2:
         return []
     cards = []
     text_height = median([line.bottom - line.top for line in lines] or [20])
-    for start, end in zip(starts, starts[1:] + [image.height]):
+    for (start, selected), end in zip(selectors, starts[1:] + [image.height]):
         if end - start < 4 * text_height:
             continue
         region = [line for line in lines if start - text_height / 2 <= line.top < end - text_height / 2]
@@ -173,6 +187,5 @@ def checkbox_cards(image: Image.Image, lines: list[Line]) -> list[CartCard]:
         if not descriptions:
             continue
         amounts = {price for _, price in price_lines}
-        cards.append(CartCard(descriptions, next(iter(amounts)) if len(amounts) == 1 else None))
-    # Never apply a heuristic segmentation that only identified a single fragment.
-    return cards if len(cards) >= 2 else []
+        cards.append(CartCard(descriptions, next(iter(amounts)) if len(amounts) == 1 else None, selected))
+    return cards

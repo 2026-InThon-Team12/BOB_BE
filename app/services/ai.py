@@ -125,6 +125,8 @@ def _system_prompt() -> str:
         "when a range is shown, or when a coupon/conditional price cannot be established. "
         "Do not mistake shipping, totals, crossed-out list prices or installment prices for item prices. "
         "Keep each displayed cart line as one item, with its displayed total for that line. "
+        "When cart selection checkboxes are visible, extract ONLY checked products. "
+        "Exclude unchecked products; do not use the select-all header as a product. "
         f"Category must be exactly one of: {categories}. "
         "Write one short Korean item-specific question about a concrete situation today where the item would actually have been used, not mere desire or remembering it. It is the ONLY daily question, answered with "
         "있었어요 / 딱히 없었어요 / 잘 모르겠어요. Do not shame or decide whether to purchase. "
@@ -375,6 +377,9 @@ class AiService:
             lines = visual_lines(text)
             cards = checkbox_cards(image, lines)
             if cards:
+                cards = [card for card in cards if card.selected]
+                if not cards:
+                    return self._cart_result([], "ocr", notices + ["NO_SELECTED_ITEMS"])
                 proposed, fallback_names = self._describe_cards(cards[:20])
                 if fallback_names:
                     notices.append("REVIEW_OCR_NAMES")

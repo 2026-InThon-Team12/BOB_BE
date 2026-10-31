@@ -12,10 +12,10 @@ from app.services.cart_layout import CartCard, checkbox_cards, name_belongs_to_c
 from app.services.ocr_layout import Line, money_values
 
 
-def cart_fixture():
+def cart_fixture(selected=(True, True, False)):
     image = Image.new("RGB", (1080, 2504), "white")
     draw = ImageDraw.Draw(image)
-    for top, checked in ((302, False), (416, True), (1024, True), (1632, False)):
+    for top, checked in zip((302, 416, 1024, 1632), (False, *selected)):
         draw.rounded_rectangle(
             (44, top, 94, top + 50),
             radius=6,
@@ -47,6 +47,7 @@ def test_checked_unchecked_and_select_all_do_not_shift_card_prices():
     cards = checkbox_cards(image, lines)
     assert len(selector_rows(image)) == 4
     assert [card.price for card in cards] == [27500, 20500, 29500]
+    assert [card.selected for card in cards] == [True, True, False]
     assert [card.lines[1].text for card in cards] == [
         "코튼 패드 청바지",
         "데일리 후드 집업",
@@ -116,13 +117,13 @@ def descriptions():
                 "category": "CLOTHING",
                 "supplemental_question": "오늘 입을 상황이 있었나요?",
             }
-            for i, name in enumerate(("코튼 패드 청바지", "데일리 후드 집업", "레드 스티치 와이드 데님"))
+            for i, name in enumerate(("코튼 패드 청바지", "데일리 후드 집업"))
         ]
     }
 
 
-def run_cart(client):
-    image, lines = cart_fixture()
+def run_cart(client, selected=(True, True, False)):
+    image, lines = cart_fixture(selected)
     table = "left\ttop\twidth\theight\tconfidence\ttext\n" + "\n".join(
         f"{line.left}\t{line.top}\t{line.right - line.left}\t{line.bottom - line.top}\t95\t{line.text}"
         for line in lines
@@ -140,9 +141,26 @@ def test_model_order_cannot_move_price_between_cards():
     client = Describer([response])
     result = run_cart(client)
     assert [i.name for i in result.items] == [i["name"] for i in descriptions()["items"]]
-    assert [i.price for i in result.items] == [27500, 20500, 29500]
+    assert [i.price for i in result.items] == [27500, 20500]
     # Model receives independent card descriptions, with no price matching task.
     assert "27500" not in client.calls[0]["content"][0]["text"]
+    assert "레드 스티치" not in client.calls[0]["content"][0]["text"]
+
+
+def test_no_selected_product_does_not_fall_back_to_extracting_all_or_call_ai():
+    client = Describer([])
+    result = run_cart(client, selected=(False, False, False))
+    assert result.items == []
+    assert "NO_SELECTED_ITEMS" in result.warnings
+    assert client.calls == []
+
+
+def test_only_middle_product_selected_keeps_its_own_name_and_price():
+    response = descriptions()
+    response["items"] = [response["items"][1]]
+    response["items"][0]["card_id"] = 0
+    result = run_cart(Describer([response]), selected=(False, True, False))
+    assert [(i.name, i.price) for i in result.items] == [("데일리 후드 집업", 20500)]
 
 
 def test_shifted_or_rewritten_model_name_keeps_own_literal_title_and_price():
