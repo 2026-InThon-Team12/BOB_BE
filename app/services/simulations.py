@@ -236,6 +236,7 @@ def item_view(session: Session, item: Item, today: date) -> dict:
             "start_date": simulation.start_date,
             "end_date_exclusive": simulation.end_date,
             "duration_days": simulation.duration_days,
+            "observation_dates": observation_dates(session, simulation),
             "measurement_question": simulation.measurement_question,
             "supplemental_question": simulation.supplemental_question,
             "answer_options": ANSWER_OPTIONS,

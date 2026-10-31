@@ -127,6 +127,7 @@ class SimulationSummary(BaseModel):
     start_date: date
     end_date_exclusive: date
     duration_days: int
+    observation_dates: list[date] = Field(default_factory=list)
     measurement_question: str
     supplemental_question: str
     answer_options: list[AnswerOption]
