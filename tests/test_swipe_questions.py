@@ -147,7 +147,7 @@ def test_ai_cannot_change_selected_intent_and_timeout_uses_product_fallback():
     assert len(client.calls) == 2
     fallback = swipe.adapt_question(FakeClient([LablupError("AI_TIMEOUT")]), template, context())
     assert fallback[2:] == ("TEMPLATE", "AI_TIMEOUT")
-    assert "요가나 스트레칭" in fallback[1]
+    assert "요가매트" in fallback[1] and "불편" in fallback[1]
 
 
 @pytest.mark.parametrize("code", list(swipe.PRE_BY_CODE))

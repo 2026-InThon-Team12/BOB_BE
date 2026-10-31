@@ -67,6 +67,7 @@ def generated_output(identifier, today, template, text, method, reason, referenc
         "question_date": today,
         "template_code": template.code,
         "template_version": swipe.VERSION,
+        "wording_version": "short-v1",
         "stage": template.stage,
         "question": text,
         "answer_spec": template.answer_spec,
