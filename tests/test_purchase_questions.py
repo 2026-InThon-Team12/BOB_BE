@@ -1,141 +1,52 @@
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
-from sqlalchemy import func, select
 
-from app.models import Item, PurchaseQuestionAnswer, SimulationQuestion, SimulationQuestionAnswer
-from app.services.purchase_questions import stages_for, month_anniversary
-from app.services import swipe_questions as swipe
-from tests.test_core import create_item, answer
+from app.models import Item, SimulationQuestion, SimulationQuestionAnswer
+from tests.test_core import create_item
 from tests.test_handoff import register
 
 P = "/api/v1"
 
 
-def purchase_item(client, headers, today, complete=False):
-    item = create_item(client, headers)
-    if complete:
-        for value in ("YES", "YES", "NO"):
-            today.value += timedelta(days=1)
-            assert answer(client, headers, item["simulation"]["id"], today.value, value).status_code == 200
-        today.value += timedelta(days=1)
-    response = client.put(f"{P}/items/{item['id']}/decision", headers=headers, json={"decision": "BUY"})
-    assert response.status_code == 200
-    return response.json()["purchase"]
-
-
-def generate(client, headers, purchase):
-    response = client.post(f"{P}/purchases/{purchase['id']}/daily-question", headers=headers)
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-@pytest.mark.parametrize("offset,stages", [(-1, []), (0, ["IMMEDIATE"]), (3, ["IMMEDIATE"]), (4, ["USAGE"])])
-def test_old_phase_metadata_stays_readable(offset, stages):
-    assert stages_for(date(2026, 1, 31), date(2026, 1, 31) + timedelta(days=offset)) == stages
-    assert month_anniversary(date(2024, 1, 31), 1) == date(2024, 2, 29)
-
-
-def test_all_new_post_questions_are_swipes_and_repeat_is_frozen(client, guest_headers, today, session):
-    purchase = purchase_item(client, guest_headers, today)
-    today.value += timedelta(days=14)
-    seen = []
-    for day in range(10):
-        q = generate(client, guest_headers, purchase)
-        assert q["template_version"] == swipe.VERSION
-        assert q["answer_spec"] == swipe.ANSWER_SPEC
-        assert q["template_code"] not in seen[-3:]
-        assert generate(client, guest_headers, purchase) == q
-        for choice in ("YES", "UNSURE", "NO"):
-            assert (
-                client.put(
-                    f"{P}/purchase-questions/{q['id']}/answer",
-                    headers=guest_headers,
-                    json={"choice_code": choice},
-                ).status_code
-                == 200
-            )
-        assert (
-            client.put(
-                f"{P}/purchase-questions/{q['id']}/answer", headers=guest_headers, json={"number_value": 5}
-            ).status_code
-            == 422
-        )
-        seen.append(q["template_code"])
-        today.value += timedelta(days=1)
-    assert len(set(seen[:8])) == 8
-    assert session.scalar(select(func.count(PurchaseQuestionAnswer.id))) == 10
-    history = client.get(f"{P}/purchases/{purchase['id']}/questions", headers=guest_headers).json()
-    assert history["usage_summary"]["observed_days"] == 0
-    assert history["usage_summary"]["reported_used_days"] == 0
-
-
-def test_local_post_uses_three_choices_without_a_separate_frequency_survey(client, guest_headers, today):
-    item = register(client, guest_headers).json()["items"][0]
+@pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("code,low,high", [
+    ("DAYS_1_3", 1, 3), ("DAYS_4_7", 4, 7),
+    ("DAYS_8_10", 8, 10), ("DAYS_11_14", 11, 14),
+])
+def test_one_time_usage_review(client, guest_headers, today, local, code, low, high):
+    item = register(client, guest_headers).json()["items"][0] if local else create_item(client, guest_headers)
     purchase = client.put(
         f"{P}/items/{item['id']}/decision", headers=guest_headers, json={"decision": "BUY"}
     ).json()["purchase"]
-    assert purchase["question_mode"] == "LOCAL"
-    today.value += timedelta(days=14)
-    daily = client.get(P + "/today", headers=guest_headers).json()
-    assert daily["reviews"] == []
-    assert len(daily["purchase_questions"]) == 1
-    history = []
-    for day in range(8):
-        q = client.post(
-            f"{P}/purchases/{purchase['id']}/local-question",
-            headers=guest_headers,
-            json={"recent_templates": history},
-        ).json()
-        assert q["answer_spec"] == swipe.ANSWER_SPEC
-        assert q["usage_window"] is None
-        assert q["template_code"] not in {r["template_code"] for r in history[-3:]}
-        history.append({"date": q["question_date"], "template_code": q["template_code"]})
-        today.value += timedelta(days=1)
-    assert len({r["template_code"] for r in history}) == 8
-
-
-def test_post_question_owner_and_date_protection(client, guest_headers, today):
-    purchase = purchase_item(client, guest_headers, today)
-    today.value += timedelta(days=14)
-    q = generate(client, guest_headers, purchase)
-    foreign = {"Authorization": "Bearer " + client.post(P + "/guest-sessions").json()["access_token"]}
-    assert client.post(f"{P}/purchases/{purchase['id']}/daily-question", headers=foreign).status_code == 404
-    assert (
-        client.put(
-            f"{P}/purchase-questions/{q['id']}/answer", headers=foreign, json={"choice_code": "YES"}
-        ).status_code
-        == 404
-    )
-    today.value += timedelta(days=1)
-    assert (
-        client.put(
-            f"{P}/purchase-questions/{q['id']}/answer", headers=guest_headers, json={"choice_code": "YES"}
-        ).status_code
-        == 409
-    )
-
-
-@pytest.mark.parametrize("local", [False, True])
-def test_purchase_reflections_wait_until_review_due_day(client, guest_headers, today, local):
-    if local:
-        item = register(client, guest_headers).json()["items"][0]
-        purchase = client.put(
-            f"{P}/items/{item['id']}/decision", headers=guest_headers, json={"decision": "BUY"}
-        ).json()["purchase"]
-    else:
-        purchase = purchase_item(client, guest_headers, today)
+    url = f"{P}/purchases/{purchase['id']}/review"
     bought = today.value
-    path = "local-question" if local else "daily-question"
-    url = f"{P}/purchases/{purchase['id']}/{path}"
-    assert purchase["review_due_on"] == (bought + timedelta(days=14)).isoformat()
     for age in (0, 13):
         today.value = bought + timedelta(days=age)
-        assert client.get(P + "/today", headers=guest_headers).json()["purchase_questions"] == []
-        assert client.post(url, headers=guest_headers, json={}).status_code == 409
+        daily = client.get(P + "/today", headers=guest_headers).json()
+        assert daily["reviews"] == daily["purchase_questions"] == []
+        assert client.put(url, headers=guest_headers, json={"frequency": code}).status_code == 409
     today.value = bought + timedelta(days=14)
-    assert len(client.get(P + "/today", headers=guest_headers).json()["purchase_questions"]) == 1
-    assert client.post(url, headers=guest_headers, json={}).status_code == 200
+    daily = client.get(P + "/today", headers=guest_headers).json()
+    assert daily["purchase_questions"] == []
+    assert len(daily["reviews"]) == 1
+    assert [o["value"] for o in daily["reviews"][0]["review_options"]] == [
+        "DAYS_1_3", "DAYS_4_7", "DAYS_8_10", "DAYS_11_14"
+    ]
+    path = "local-question" if local else "daily-question"
+    assert client.post(f"{P}/purchases/{purchase['id']}/{path}", headers=guest_headers, json={}).status_code == 409
+    response = client.put(url, headers=guest_headers, json={"frequency": code})
+    assert response.status_code == 200, response.text
+    review = response.json()["review"]
+    assert (review["min_days"], review["max_days"], review["estimated_days"]) == (low, high, (low+high)/2)
+    assert review["used_days"] is None
+    assert client.put(url, headers=guest_headers, json={"frequency": code}).json()["review"] == review
+    other = "DAYS_1_3" if code != "DAYS_1_3" else "DAYS_11_14"
+    assert client.put(url, headers=guest_headers, json={"frequency": other}).status_code == 409
+    for age in (14, 15, 45):
+        today.value = bought + timedelta(days=age)
+        daily = client.get(P + "/today", headers=guest_headers).json()
+        assert daily["reviews"] == daily["purchase_questions"] == []
 
 
 def test_historical_numeric_question_and_baseline_are_not_reinterpreted(

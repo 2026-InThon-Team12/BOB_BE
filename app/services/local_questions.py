@@ -11,9 +11,8 @@ from app.integrations.lablup import LablupClient, LablupError
 from app.models import Item, Simulation
 from app.question_schemas import SimulationAnswerInput
 from app.schemas import RequestModel
-from app.services import pre_purchase_questions as pre, purchase_questions as post
+from app.services import pre_purchase_questions as pre
 from app.services.pre_question_catalog import BY_CODE
-from app.services.question_catalog import BY_CODE as POST_BY_CODE
 from app.services import swipe_questions as swipe
 
 
@@ -107,26 +106,7 @@ def local_pre_question(session, simulation, today, request, ai):
 
 
 def local_post_question(session, purchase, today, request, ai):
-    if today < purchase.review_due_on:
-        raise AppError(409, "NO_QUESTION_DUE", "구매 후 점검일부터 질문을 진행할 수 있습니다.")
-    validate_recent(
-        request.recent_templates, {**POST_BY_CODE, **swipe.POST_BY_CODE}, purchase.purchased_on, today
-    )
-    context = post.context_for(session, purchase, today)
-    candidates = swipe.select_question(swipe.POST_CATALOG, request.recent_templates, context)
-    session.commit()
-    code, wording, method, reason = ai.adapt(candidates, context)
-    output = generated_output(
-        purchase.id,
-        today,
-        swipe.POST_BY_CODE[code],
-        wording,
-        method,
-        reason,
-        swipe.reference_text(code, context),
-    )
-    output["usage_window"] = None
-    return output
+    raise AppError(409, "USE_PURCHASE_REVIEW", "구매 14일 후 사용일수 점검에 답해 주세요.")
 
 
 def validate_response(row):

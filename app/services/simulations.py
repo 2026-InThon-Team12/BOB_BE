@@ -23,6 +23,12 @@ def duration_for_price(price: int) -> int:
 
 
 REVIEW_OPTIONS = [
+    {"value": "DAYS_1_3", "label": "1–3일", "min_days": 1, "max_days": 3},
+    {"value": "DAYS_4_7", "label": "4–7일", "min_days": 4, "max_days": 7},
+    {"value": "DAYS_8_10", "label": "8–10일", "min_days": 8, "max_days": 10},
+    {"value": "DAYS_11_14", "label": "11–14일", "min_days": 11, "max_days": 14},
+]
+LEGACY_REVIEW_OPTIONS = [
     {"value": "ALMOST_DAILY", "label": "거의 매일", "min_days": 10, "max_days": 14},
     {"value": "OFTEN", "label": "자주", "min_days": 5, "max_days": 9},
     {"value": "SOMETIMES", "label": "가끔", "min_days": 1, "max_days": 4},
@@ -166,7 +172,7 @@ def purchase_view(session: Session, purchase: Purchase, today: date) -> dict:
     estimate, low, high = None, None, None
     if review:
         if review.frequency:
-            option = next(option for option in REVIEW_OPTIONS if option["value"] == review.frequency)
+            option = next(option for option in REVIEW_OPTIONS + LEGACY_REVIEW_OPTIONS if option["value"] == review.frequency)
             low, high = option["min_days"], option["max_days"]
             estimate = (low + high) / 2
         else:
@@ -339,10 +345,6 @@ def get_today_cards(session: Session, guest_id: str, today: date, include_answer
         .where(Purchase.guest_id == guest_id, Purchase.review_due_on <= today)
         .order_by(Purchase.review_due_on)
     ):
-        simulation = session.scalar(select(Simulation).where(Simulation.item_id == purchase.item_id))
-        if simulation.question_version in ("local-v1", "pre-v1"):
-            # Daily swipe reflections replace the separate multi-choice usage survey.
-            continue
         if not session.scalar(select(PurchaseReview.id).where(PurchaseReview.purchase_id == purchase.id)):
             reviews.append(purchase_view(session, purchase, today))
     counts = {

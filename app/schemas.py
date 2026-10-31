@@ -91,7 +91,7 @@ class DecisionRequest(RequestModel):
 
 
 class ReviewRequest(RequestModel):
-    frequency: Literal["ALMOST_DAILY", "OFTEN", "SOMETIMES", "NEVER"] | None = None
+    frequency: Literal["DAYS_1_3", "DAYS_4_7", "DAYS_8_10", "DAYS_11_14", "ALMOST_DAILY", "OFTEN", "SOMETIMES", "NEVER"] | None = None
     used_days: Annotated[int, Field(strict=True, ge=0, le=14)] | None = Field(
         default=None, json_schema_extra={"deprecated": True}
     )

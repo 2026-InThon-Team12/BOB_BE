@@ -1,7 +1,6 @@
 """Daily, immutable question snapshots with server-owned measurement semantics."""
 
 import calendar
-import copy
 import json
 from datetime import date, timedelta
 
@@ -242,56 +241,7 @@ def generate_question(
     )
     if purchase is None:
         raise AppError(404, "PURCHASE_NOT_FOUND", "구매 기록을 찾을 수 없습니다.")
-    simulation = session.scalar(select(Simulation).where(Simulation.item_id == purchase.item_id))
-    if simulation.question_version == "local-v1":
-        raise AppError(409, "LOCAL_STORAGE_REQUIRED", "로컬 질문 API를 사용하고 응답은 기기에 저장해 주세요.")
-    if today < purchase.review_due_on:
-        raise AppError(409, "QUESTION_NOT_DUE", "구매 후 점검일부터 질문을 만들 수 있습니다.")
-    existing = session.scalar(
-        select(PurchaseQuestion).where(
-            PurchaseQuestion.purchase_id == purchase.id, PurchaseQuestion.question_date == today
-        )
-    )
-    if existing:
-        return existing
-    context = context_for(session, purchase, today)
-    candidates = candidates_for(session, purchase, today, context)
-    if not candidates:
-        raise AppError(409, "NO_QUESTION_AVAILABLE", "오늘 물어볼 질문이 없습니다.")
-    # Never hold a database lock/transaction while waiting for the model.
-    session.commit()
-    code, wording, method, reason = ai.adapt(candidates, context)
-    template = swipe.POST_BY_CODE[code]
-    context["template_original"] = template.original
-    context["reference_text"] = reference_text(code, context)
-    spec = copy.deepcopy(template.answer_spec)
-    lock_guest(session, guest_id)
-    # A concurrent retry may have won; its rendered wording is authoritative.
-    existing = session.scalar(
-        select(PurchaseQuestion).where(
-            PurchaseQuestion.purchase_id == purchase.id, PurchaseQuestion.question_date == today
-        )
-    )
-    if existing:
-        session.commit()
-        return existing
-    question = PurchaseQuestion(
-        guest_id=guest_id,
-        purchase_id=purchase.id,
-        question_date=today,
-        template_code=code,
-        template_version=swipe.VERSION,
-        stage=template.stage,
-        question_text=wording,
-        answer_spec=spec,
-        context_snapshot=context,
-        generation_method=method,
-        model_id=ai.settings.lablup_model_id if method == "AI" else None,
-        fallback_reason=reason,
-    )
-    session.add(question)
-    session.commit()
-    return question
+    raise AppError(409, "USE_PURCHASE_REVIEW", "구매 14일 후 사용일수 점검에 답해 주세요.")
 
 
 def question_output(session: Session, question: PurchaseQuestion) -> dict:
@@ -378,79 +328,11 @@ def save_question_answer(
     )
     if question is None:
         raise AppError(404, "QUESTION_NOT_FOUND", "질문을 찾을 수 없습니다.")
-    if question.question_date != today:
-        raise AppError(409, "ANSWER_DATE_INVALID", "오늘 질문의 답변만 작성하거나 수정할 수 있습니다.")
-    purchase = session.get(Purchase, question.purchase_id)
-    if today < purchase.review_due_on:
-        raise AppError(409, "QUESTION_NOT_DUE", "구매 후 점검일부터 답할 수 있습니다.")
-    spec = question.answer_spec
-    valid = (
-        (choice_code in {row["code"] for row in spec["options"]} and number_value is None)
-        if choice_code is not None
-        else (
-            number_value is not None
-            and spec["type"] == "INTEGER"
-            and spec["minimum"] <= number_value <= spec["maximum"]
-        )
-    )
-    if not valid:
-        raise AppError(422, "ANSWER_NOT_ALLOWED", "이 질문의 선택지 또는 입력 범위에 맞춰 답해 주세요.")
-    answer = session.scalar(
-        select(PurchaseQuestionAnswer).where(PurchaseQuestionAnswer.question_id == question.id)
-    )
-    if answer is None:
-        answer = PurchaseQuestionAnswer(question_id=question.id, answered_on=today)
-        session.add(answer)
-    answer.choice_code, answer.number_value = choice_code, number_value
-    session.commit()
-    return question
+    raise AppError(409, "USE_PURCHASE_REVIEW", "구매 후 스와이프 응답은 종료되었습니다.")
 
 
 def daily_purchase_tasks(
     session: Session, guest_id: str, today: date, include_answered: bool = False
 ) -> tuple[list, list]:
-    tasks, completed = [], []
-    purchases = session.scalars(
-        select(Purchase)
-        .where(Purchase.guest_id == guest_id, Purchase.review_due_on <= today)
-        .order_by(Purchase.purchased_on, Purchase.id)
-    )
-    for purchase in purchases:
-        item = session.get(Item, purchase.item_id)
-        simulation = session.scalar(select(Simulation).where(Simulation.item_id == item.id))
-        if simulation.question_version == "local-v1":
-            tasks.append(
-                {
-                    "purchase_id": purchase.id,
-                    "item_id": item.id,
-                    "name": item.name,
-                    "category": item.category,
-                    "elapsed_days": (today - purchase.purchased_on).days,
-                    "eligible_stages": stages_for(purchase.purchased_on, today),
-                    "question": None,
-                    "answer_state": "CLIENT_MANAGED",
-                    "generate_url": f"/api/v1/purchases/{purchase.id}/local-question",
-                }
-            )
-            continue
-        question = session.scalar(
-            select(PurchaseQuestion).where(
-                PurchaseQuestion.purchase_id == purchase.id, PurchaseQuestion.question_date == today
-            )
-        )
-        rendered = question_output(session, question) if question else None
-        task = {
-            "purchase_id": purchase.id,
-            "item_id": item.id,
-            "name": item.name,
-            "category": item.category,
-            "elapsed_days": (today - purchase.purchased_on).days,
-            "eligible_stages": stages_for(purchase.purchased_on, today),
-            "question": rendered,
-            "generate_url": f"/api/v1/purchases/{purchase.id}/daily-question",
-        }
-        if rendered and rendered["answer"]:
-            completed.append(task)
-        if not rendered or not rendered["answer"] or include_answered:
-            tasks.append(task)
-    return tasks, completed
+    # Purchase reviews are now a single survey, exposed through /today.reviews.
+    return [], []

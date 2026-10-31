@@ -213,7 +213,7 @@ def test_local_questions_summary_and_purchase_do_not_persist_transcript(
     assert client.post(endpoint, headers=guest_headers, json={"responses": records}).status_code == 409
     today.value += timedelta(days=14)
     generated = client.post(f"{P}/purchases/{bought['id']}/local-question", headers=guest_headers, json={})
-    assert generated.status_code == 200 and generated.json()["storage"] == "LOCAL_ONLY"
+    assert generated.status_code == 409
     assert session.scalar(select(func.count(PurchaseQuestion.id))) == 0
     assert (
         client.post(f"{P}/purchases/{bought['id']}/daily-question", headers=guest_headers).status_code == 409
@@ -241,7 +241,7 @@ def test_local_summary_validates_dates_semantics_and_ownership(client, guest_hea
     assert client.post(url, headers=guest_headers, json={"responses": [row, row]}).status_code == 422
 
 
-def test_post_local_review_still_generates_a_swipe_reflection(client, guest_headers, today):
+def test_post_local_review_does_not_generate_more_questions(client, guest_headers, today):
     item = register(client, guest_headers).json()["items"][0]
     purchase = client.put(
         f"{P}/items/{item['id']}/decision", headers=guest_headers, json={"decision": "BUY"}
@@ -254,9 +254,9 @@ def test_post_local_review_still_generates_a_swipe_reflection(client, guest_head
         == 200
     )
     question = client.post(f"{P}/purchases/{purchase['id']}/local-question", headers=guest_headers, json={})
-    assert question.status_code == 200
-    assert question.json()["template_code"].startswith("SW_POST_")
-    assert {o["code"] for o in question.json()["answer_spec"]["options"]} == {"YES", "UNSURE", "NO"}
+    assert question.status_code == 409
+    daily = client.get(P + "/today", headers=guest_headers).json()
+    assert daily["reviews"] == daily["purchase_questions"] == []
 
 
 def test_summary_model_repair_timeout_and_fallback():

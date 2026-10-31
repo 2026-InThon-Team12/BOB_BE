@@ -465,12 +465,13 @@ def review_purchase(purchase_id: str, body: ReviewRequest, session: DB, guest: O
     if body.used_days is not None and body.used_days > window:
         raise AppError(422, "USAGE_EXCEEDS_WINDOW", "회고 기간보다 사용일수가 많을 수 없습니다.")
     review = session.scalar(select(PurchaseReview).where(PurchaseReview.purchase_id == purchase.id))
-    if review is None:
-        review = PurchaseReview(
-            purchase_id=purchase.id, used_days=body.used_days, frequency=body.frequency, submitted_on=today
-        )
-        session.add(review)
-    else:
-        review.used_days, review.frequency, review.submitted_on = body.used_days, body.frequency, today
+    if review is not None:
+        if review.frequency != body.frequency or review.used_days != body.used_days:
+            raise AppError(409, "REVIEW_ALREADY_COMPLETED", "이미 구매 후 점검을 마쳤습니다.")
+        return purchase_view(session, purchase, today)
+    review = PurchaseReview(
+        purchase_id=purchase.id, used_days=body.used_days, frequency=body.frequency, submitted_on=today
+    )
+    session.add(review)
     session.commit()
     return purchase_view(session, purchase, today)
