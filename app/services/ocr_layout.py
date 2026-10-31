@@ -106,12 +106,19 @@ def name_anchor(name: str, lines: list[Line]) -> int | None:
 
 
 def money_values(text: str) -> set[int]:
-    if re.search(r"배송|합계|총\s*(?:액|금액|결제|상품)|할부|쿠폰|적립|정가", text):
+    if re.search(
+        r"배송|합계|총(?:액|금액|결제|상품)|할부|쿠폰|적립|정가|주문|결제", re.sub(r"\s+", "", text)
+    ):
         return set()
     # Currency-labelled values, comma-grouped amounts, or an isolated amount.
     values = re.findall(r"(?:₩\s*)(\d[\d,]*)|(?<![\d,])(\d[\d,]*)\s*원", text)
     numbers = [a or b for a, b in values]
     numbers += re.findall(r"(?<![\d,])(\d{1,3}(?:,\d{3})+)(?![\d,%])", text)
+    # Korean 원 is sometimes read as 2!/9! attached to an otherwise intact
+    # comma-grouped amount. Require the whole line and that specific glyph error.
+    won_glyph = re.fullmatch(r"\s*(\d{1,3}(?:,\d{3})+)\s*\d[!.ㅣ)]\s*", text)
+    if won_glyph:
+        numbers.append(won_glyph[1])
     if re.fullmatch(r"\s*\d{3,}\s*", text):
         numbers.append(text.strip())
     return {int(n.replace(",", "")) for n in numbers if n.replace(",", "").isdigit()}

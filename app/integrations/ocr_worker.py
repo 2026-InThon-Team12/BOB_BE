@@ -11,11 +11,11 @@ from PIL import Image
 
 
 def main() -> int:
-    from tesserocr import PyTessBaseAPI
+    from tesserocr import PSM, PyTessBaseAPI
 
     try:
         with Image.open(io.BytesIO(sys.stdin.buffer.read())) as image:
-            with PyTessBaseAPI(path=sys.argv[1], lang="kor+eng") as engine:
+            with PyTessBaseAPI(path=sys.argv[1], lang="kor+eng", psm=PSM.SPARSE_TEXT) as engine:
                 engine.SetImage(image)
                 result = engine.GetTSVText(0)
         sys.stdout.buffer.write(result.encode("utf-8"))
