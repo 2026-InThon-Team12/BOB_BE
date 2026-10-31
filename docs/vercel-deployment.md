@@ -62,6 +62,10 @@ OCR만으로는 상품 이미지 영역을 확정할 수 없어 기존대로 `im
 
 ## 푸시
 
+2026-10-31: Firebase `buy-or-bye-af0ba` 연결과 Vercel Secret 등록·재배포를 완료했다.
+FCM 발송 권한은 `validate_only`로 검증했고, 배포 서버의 인증된 cron 호출도 HTTP 200으로 확인했다.
+Android 기기가 아직 등록되지 않아 실제 기기 수신은 미검증이다.
+
 `0 11 * * *` UTC cron이 `/internal/notifications`를 호출한다.
 Hobby는 지정 시각부터 한 시간 이내에 실행하므로 한국 시간 **20:00~20:59**에 실행된다.
 60초마다 실행하는 상시 워커를 Vercel에 띄우는 구조가 아니다.

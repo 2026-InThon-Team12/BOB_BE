@@ -1,7 +1,11 @@
 # 배포 서버와 Android 푸시 연결
 
 서버 주소는 `https://bob-be.vercel.app`이다. 서버·Android는 같은 Firebase 프로젝트를 사용한다.
-현재 코드와 정기 스케줄만으로는 실기기 수신이 완료된 것이 아니다. 아래 외부 설정과 기기 검증이 필요하다.
+2026-10-31 기준 Firebase 프로젝트 `buy-or-bye-af0ba`의 서버 연결을 완료했다.
+Vercel Production에 프로젝트 ID와 서비스 계정 Secret을 등록하고 재배포했다.
+OAuth 인증, FCM `validate_only` 요청, 배포 서버의 인증된 정기 작업 호출(HTTP 200)을 확인했다.
+등록된 수신 기기는 0개로 실제 알림은 발송하지 않았다. Android 앱 구현과 실기기 수신 검증은 남아 있다.
+아래 Firebase 설정 절차는 재설정·인수인계용이다. 현재 연결을 위해 새 키를 다시 발급할 필요는 없다.
 
 ## Firebase와 Vercel
 
