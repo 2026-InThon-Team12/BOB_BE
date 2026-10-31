@@ -115,7 +115,7 @@ def test_discount_image_fallback_correction_and_unknown_prices(monkeypatch):
 
 def dns(monkeypatch, addresses):
     monkeypatch.setattr(
-        sharing.socket,
+        sharing,
         "getaddrinfo",
         lambda *_args, **_kwargs: [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443)) for address in addresses
@@ -155,7 +155,7 @@ def test_metadata_price_must_be_known_krw_and_single_offer(monkeypatch):
 
 def test_share_redirect_revalidates_before_second_connection(monkeypatch):
     monkeypatch.setattr(
-        sharing.socket,
+        sharing,
         "getaddrinfo",
         lambda host, *_args, **_kwargs: [
             (

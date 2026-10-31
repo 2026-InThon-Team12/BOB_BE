@@ -100,7 +100,7 @@ def test_invalid_product_urls_never_connect(client, guest_headers, monkeypatch, 
         pytest.fail("invalid URL must be rejected before any connection")
 
     monkeypatch.setattr(sharing, "PinnedConnection", forbidden)
-    monkeypatch.setattr(sharing.socket, "getaddrinfo", forbidden)
+    monkeypatch.setattr(sharing, "getaddrinfo", forbidden)
     response = client.post(P + "/product-url-drafts", headers=guest_headers, json={"url": url})
     assert response.status_code == 422
 
@@ -132,3 +132,11 @@ def test_jsonld_product_image_is_used_when_og_image_is_absent(monkeypatch, image
     metadata = sharing.extract_metadata(html, "https://shop.example/p")
     assert metadata["name"] == "무드등" and metadata["price"] == 19000
     assert metadata["image_url"] == "https://shop.example/lamp.png"
+
+
+def test_product_dns_mock_does_not_override_database_resolver(monkeypatch):
+    import socket
+    resolver = socket.getaddrinfo
+    dns(monkeypatch, ["93.184.216.34"])
+    assert socket.getaddrinfo is resolver
+    assert sharing.public_target("https://shop.example/p")[1] == "93.184.216.34"

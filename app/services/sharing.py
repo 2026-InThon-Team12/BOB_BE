@@ -4,6 +4,7 @@ import http.client
 import ipaddress
 import json
 import socket
+from socket import getaddrinfo
 import ssl
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -26,7 +27,7 @@ def public_target(url: str) -> tuple[str, str, str]:
         host = parts.hostname.encode("idna").decode("ascii")
         if len(host) > 253 or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
             raise ValueError()
-        addresses = {entry[4][0] for entry in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+        addresses = {entry[4][0] for entry in getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
         if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
             raise ValueError()
         path = quote(parts.path or "/", safe="/%:@!$&'()*+,;=-._~")
