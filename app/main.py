@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
@@ -81,6 +81,10 @@ def create_app(settings: Settings | None = None, session_factory=None) -> FastAP
                 }
             },
         )
+
+    @application.get("/", include_in_schema=False)
+    def root():
+        return RedirectResponse(url="/docs")
 
     @application.get("/health", tags=["health"])
     def health():
