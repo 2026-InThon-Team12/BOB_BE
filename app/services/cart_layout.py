@@ -217,21 +217,23 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
             continue
         end = next((y for y in dividers[key] if start + 3 * text_height < y < end), end)
         near_header = [
-            line for line in lines if start - text_height / 2 <= line.top < start + 2 * text_height
+            line
+            for line in column_lines[key]
+            if start - text_height / 2 <= line.top < start + 2 * text_height
+            and left <= line.left
+            and line.right <= right
         ]
-        if any(
-            re.search(r"전체선택|포인트받기|\d+원적립|쿠폰받기", normalized(line.text))
-            for line in near_header
-        ):
+        if any(re.search(r"전체선택|포인트받기|\d+원적립", normalized(line.text)) for line in near_header):
             continue
         region = [
             line
             for line in column_lines[key]
             if start - text_height / 2 <= line.top < end - text_height / 2
+            and line.bottom <= end
             and left <= line.left
             and line.right <= right
         ]
-        footer = next(
+        footer = min(
             (
                 line.top
                 for line in region
@@ -240,9 +242,10 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
                     normalized(line.text),
                 )
             ),
-            end,
+            default=end,
         )
-        region = [line for line in region if line.top < footer]
+        end = footer
+        region = [line for line in region if line.top < end and line.bottom <= end]
         price_lines = []
         for line in region:
             values = card_price_values(line.text)
