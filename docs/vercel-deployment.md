@@ -35,7 +35,7 @@ DB 마이그레이션은 빌드·요청마다 실행하지 않고 배포 전에 
 | `LABLUP_API_KEY` | 서버 전용 Secret. 현재 등록된 `Lablup`도 호환하며 표준 이름이 우선 |
 | `LABLUP_BASE_URL` | `https://api.console.lablup.ai/anthropic` |
 | `LABLUP_MODEL_ID` | `DeepSeek-V4.1-Flash-B300` |
-| `LABLUP_VISION_ENABLED` | `false`: 이미지 지원 미검증이므로 OCR 사용 |
+| `LABLUP_VISION_ENABLED` | 할인 조건 추출에만 적용. 장바구니의 첫 AI 요청은 값과 무관하게 이미지 포함 |
 | `OCR_BACKEND` | `python` |
 | `TESSDATA_DIR` | `vendor/tessdata` |
 | `MAX_IMAGE_BYTES` | `4000000` |
@@ -53,12 +53,12 @@ Vercel에서는 Dockerfile의 OS 패키지 설치를 실행하지 않는다. 대
 `tesserocr` Linux wheel을 설치하고, 빌드에서 공식 `tessdata_fast`의 `kor`·`eng` 파일을 내려받는다.
 다운로드는 커밋과 SHA-256으로 고정하며, 빌드 중 실제 이미지 인식에 실패하면 배포가 실패한다.
 런타임에서는 별도 프로세스에 PNG를 stdin으로 전달하고 TSV만 받는다. 최대 30초 후 종료하며
-이미지 원본은 디스크에 저장하지 않는다. OCR 결과는 기존 Lablup 텍스트 분석으로 이어진다.
+이미지 원본은 디스크에 저장하지 않는다. OCR은 기존 선택 상품·가격·사진 영역 검증에 사용한다. 첫 Lablup 분석 요청은 상품 사진 또는 검증된 상품 행 이미지를 포함한다. 모델의 명시적 이미지 미지원 응답에만 이미지 없는 텍스트 요청으로 재시도한다.
 
 Android는 업로드 전에 이미지를 **4,000,000바이트 이하**로 압축해야 한다.
 Vercel의 요청·응답 전체 한도는 4.5 MB이므로 multipart 여유를 둔다.
 한도를 넘으면 FastAPI에 도달하기 전에 Vercel이 413을 반환할 수 있으며, 이 응답은 앱의 JSON 오류 형식과 다르다.
-OCR만으로는 상품 이미지 영역을 확정할 수 없어 기존대로 `image_crop=null`일 수 있다.
+상품 사진 영역을 확정할 수 없으면 `image_crop=null`이다. AI 인식용 상품 행 이미지를 상품 사진으로 반환하지 않는다.
 
 ## 푸시
 

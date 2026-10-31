@@ -1,5 +1,6 @@
 """Small, bounded Anthropic Messages client for Lablup's gateway only."""
 
+import re
 from typing import Any
 
 import httpx
@@ -14,6 +15,30 @@ class LablupError(RuntimeError):
         self.code = code
         self.image_unsupported = image_unsupported
         super().__init__(code)
+
+
+def _image_input_unsupported(response: httpx.Response) -> bool:
+    """Only explicit capability errors qualify, not malformed images or requests."""
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    error = body.get("error", body) if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        code = str(error.get("code", error.get("type", ""))).lower()
+        if code in {"image_input_unsupported", "unsupported_image_input", "vision_not_supported",
+                    "image_not_supported", "unsupported_modality"}:
+            return True
+        message = error.get("message", "")
+    else:
+        message = error
+    if not isinstance(message, str):
+        return False
+    return bool(re.search(
+        r"\b(?:image inputs?|vision|multimodal input|images) (?:is |are )?(?:unsupported|not supported)\b"
+        r"|\b(?:does not|doesn't|cannot|can't) (?:support|accept|process) (?:image inputs?|images|vision)\b",
+        message.lower(),
+    ))
 
 
 class LablupClient:
@@ -63,7 +88,10 @@ class LablupClient:
             if response.status_code in (400, 415, 422):
                 raise LablupError(
                     "AI_REQUEST_REJECTED",
-                    image_unsupported=any(block.get("type") == "image" for block in content),
+                    image_unsupported=(
+                        any(block.get("type") == "image" for block in content)
+                        and _image_input_unsupported(response)
+                    ),
                 )
             if not response.is_success:
                 raise LablupError("AI_UNAVAILABLE")

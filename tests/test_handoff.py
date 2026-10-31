@@ -325,8 +325,8 @@ def test_vision_receives_isolated_photos_and_preserves_server_prices():
             assert crop.getpixel((crop.width // 2, crop.height // 2))[index * 2] > 240
     config.lablup_vision_enabled = False
     result = ai.extract_cart(data.getvalue())
-    assert result.analysis_method == "ocr"
-    assert all(b["type"] == "text" for b in fake.calls[1]["content"])
+    assert result.analysis_method == "vision"
+    assert any(b["type"] == "image" for b in fake.calls[1]["content"])
     assert all(item.image_crop for item in result.items)
 
 

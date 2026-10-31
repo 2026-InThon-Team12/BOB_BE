@@ -287,7 +287,8 @@ class AiService:
             )
 
     def _describe_cards(
-        self, cards: list[CartCard], crops: list[dict | None] | None = None
+        self, cards: list[CartCard], crops: list[dict | None] | None = None,
+        *, row_images: list[dict | None] | None = None,
     ) -> tuple[list[_ProposedItem], set[str]]:
         """AI can name/classify a card but cannot pair or supply its price."""
         system = (
@@ -334,14 +335,21 @@ class AiService:
                 ),
             }
         ]
-        if crops:
-            for index, crop in enumerate(crops):
+        if crops or row_images:
+            for index in range(len(cards)):
+                photo = crops[index] if crops else None
+                crop = photo or (row_images[index] if row_images else None)
                 if crop:
                     content.extend(
                         [
                             {
                                 "type": "text",
-                                "text": f"Product photo for card_id={index}. Use only with that card's OCR.",
+                                "text": (
+                                    f"Product photo for card_id={index}. Use only with that card's OCR."
+                                    if photo else
+                                    f"Verified cart row for card_id={index}. Use only this row; "
+                                    "do not invent a product photo or use amounts as the output price."
+                                ),
                             },
                             {
                                 "type": "image",
@@ -443,15 +451,19 @@ class AiService:
             if any(card.price is None for card in cards):
                 notices.append("REVIEW_PRICES_MANUALLY")
             crops = []
+            row_images = []
             for card in cards:
                 box = thumbnail_box(image, card, word_boxes(text))
                 crops.append(encode_thumbnail(image, box) if box else None)
+                # A missing product-only crop must not silently select text-only AI.
+                # The row image is for recognition only, never returned as a product photo.
+                row_images.append(encode_thumbnail(image, card.box) if not box and card.box else None)
             method = "ocr"
             try:
-                use_photos = self.settings.lablup_vision_enabled and any(crops)
-                proposed, fallback_names = self._describe_cards(cards, crops if use_photos else None)
-                if use_photos:
-                    method = "vision"
+                if not all(photo or row for photo, row in zip(crops, row_images)):
+                    raise LablupError("SELECTION_UNVERIFIED")
+                proposed, fallback_names = self._describe_cards(cards, crops, row_images=row_images)
+                method = "vision"
             except LablupError as exc:
                 if not exc.image_unsupported:
                     raise

@@ -107,6 +107,8 @@ def test_ocr_path_sends_only_text_and_preserves_unknown_price():
 
     def handler(request):
         requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(400, json={"error": "image input unsupported"})
         return response_for(descriptions())
 
     ai = service(handler)
@@ -124,8 +126,9 @@ def test_ocr_path_sends_only_text_and_preserves_unknown_price():
     assert result.analysis_method == "ocr"
     assert result.items[0].price is None
     assert result.items[0].source == ItemSource.SCREENSHOT
-    assert all(block["type"] == "text" for block in requests[0]["messages"][0]["content"])
-    assert requests[0]["thinking"] == {"type": "disabled"}
+    assert any(block["type"] == "image" for block in requests[0]["messages"][0]["content"])
+    assert all(block["type"] == "text" for block in requests[1]["messages"][0]["content"])
+    assert requests[1]["thinking"] == {"type": "disabled"}
     assert "CONFIRM_EXTRACTED_ITEMS" in result.warnings
 
 
