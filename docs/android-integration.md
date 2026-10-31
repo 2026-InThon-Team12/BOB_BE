@@ -30,7 +30,12 @@ Content-Type: application/json
 
 ## 3. 푸시 수신과 화면 이동
 
-FCM은 notification과 data를 함께 보냅니다. data 값은 모두 문자열입니다.
+신규 LOCAL 질문이 포함된 정기 알림은 **data-only** 메시지입니다. `client_managed=true`일 때
+`FirebaseMessagingService.onMessageReceived`에서 `/today`와 기기의 로컬 답변을 합쳐 확인한 뒤,
+남은 일이 있을 때만 `bob_daily` 채널에 알림을 표시합니다. 수신 처리가 완료될 때까지 필요한
+네트워크 작업은 WorkManager 등으로 이어가며, 푸시 수신 여부와 별개로 앱 실행 시 `/today`를 갱신합니다.
+data 값은 모두 문자열입니다. 아래 notification+data 동작은 서버가 완료 여부를 아는 이전 흐름과
+일반 테스트 알림에 적용합니다.
 
 ```json
 {"route":"today","digest_id":"<dispatch UUID>","test":"false"}

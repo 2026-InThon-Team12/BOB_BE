@@ -15,6 +15,41 @@ from app.workers.notifications import run_once
 SECRET = "cron-test-secret-" * 3
 
 
+def test_remote_push_requires_admin_secret(client, app, guest_headers):
+    sender = Mock()
+    configure_cron(app, sender)
+    body = {"guest_id": "00000000-0000-0000-0000-000000000000"}
+    assert client.post("/internal/notifications/test", json=body).status_code == 401
+    assert client.post("/internal/notifications/test", json=body, headers=guest_headers).status_code == 401
+    sender.send.assert_not_called()
+
+
+@pytest.mark.parametrize("client_managed", [False, True])
+def test_remote_push_acceptance_does_not_consume_daily_digest(client, app, session_factory, client_managed):
+    sender = Mock()
+    configure_cron(app, sender)
+    guest = client.post("/api/v1/guest-sessions").json()
+    auth = {"Authorization": "Bearer " + guest["access_token"]}
+    assert client.put("/api/v1/me/push-token", headers=auth, json={"token": "test-device", "enabled": True}).status_code == 200
+    response = client.post(
+        "/internal/notifications/test",
+        headers={"Authorization": f"Bearer {SECRET}"},
+        json={"guest_id": guest["guest_id"], "client_managed": client_managed},
+    )
+    assert response.status_code == 202
+    assert response.json() == {"status": "FCM_ACCEPTED", "delivery_confirmed": False}
+    assert sender.send.call_args.args[0] == "test-device"
+    assert sender.send.call_args.kwargs == {"test": True, "client_managed": client_managed}
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(NotificationDispatch)) == 0
+    client.delete("/api/v1/me/push-token", headers=auth)
+    assert client.post(
+        "/internal/notifications/test", headers={"Authorization": f"Bearer {SECRET}"},
+        json={"guest_id": guest["guest_id"]},
+    ).status_code == 404
+    sender.send.assert_called_once()
+
+
 def test_lablup_secret_alias_and_standard_name_precedence(monkeypatch):
     monkeypatch.delenv("LABLUP_API_KEY", raising=False)
     monkeypatch.setenv("Lablup", "dashboard-secret")

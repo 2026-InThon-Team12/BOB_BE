@@ -281,6 +281,11 @@ def test_fcm_payload_has_route_ttl_and_collapse(monkeypatch):
     message = captured[1]["message"]
     assert "notification" not in message and "notification" not in message["android"]
     assert message["data"]["client_managed"] == "true"
+    sender.send("device", "test-local", 120, client_managed=True, test=True)
+    message = captured[2]["message"]
+    assert "notification" not in message
+    assert message["data"]["test"] == "true"
+    assert message["data"]["client_managed"] == "true"
 
 
 def test_retry_after_supports_http_date():

@@ -154,7 +154,7 @@ class FirebaseSender:
                 "notification": {"tag": digest_id, "channel_id": "bob_daily"},
             },
         }
-        if client_managed and not test:
+        if client_managed:
             # Android must filter completed local cards before displaying a notification.
             # A notification payload would bypass that check in the background.
             message.pop("notification")
