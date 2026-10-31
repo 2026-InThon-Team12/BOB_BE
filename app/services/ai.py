@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_fie
 from app.core.config import Settings, get_settings
 from app.integrations.lablup import LablupClient, LablupError
 from app.models import Category, ItemSource
+from app.services.ocr_layout import grounded_prices, visual_lines
 
 
 PositivePrice = Annotated[int, Field(strict=True, gt=0, le=1_000_000_000_000)]
@@ -290,9 +291,40 @@ class AiService:
                         raise
                     notices.append("VISION_UNAVAILABLE_USING_OCR")
             text = self.ocr(image, self.settings)
-            proposed = self._propose(
-                [{"type": "text", "text": "Extract cart items from this OCR word table:\n" + text[:40_000]}]
+            lines = visual_lines(text)
+            layout = (
+                json.dumps(
+                    [
+                        {"line": i, "box": [line.left, line.top, line.right, line.bottom], "text": line.text}
+                        for i, line in enumerate(lines)
+                    ],
+                    ensure_ascii=False,
+                )
+                if lines
+                else text[:40_000]
             )
+            proposed = self._propose(
+                [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract cart items in top-to-bottom screen order from these spatial OCR lines. "
+                            "Each product title must be paired ONLY with its own price within the same card, "
+                            "before the next product title. Never shift prices to the previous or next product. "
+                            "A title wrapping onto several lines is ONE product. Keep columns separate. "
+                            "In shopping carts such as ABLY, shop/brand headings are not product titles; "
+                            "read the product title below its shop heading. A checkbox being off does not "
+                            "transfer that row's price to the previous or next selected row. "
+                            "Use null if the title/price association is uncertain, or if a card is cut off.\n"
+                            + layout
+                        ),
+                    }
+                ]
+            )
+            checked, rejected = grounded_prices([item.model_dump() for item in proposed], lines)
+            proposed = [_ProposedItem.model_validate(item) for item in checked]
+            if rejected:
+                notices.append("REVIEW_NAME_PRICE_PAIRS")
             return self._cart_result(proposed, "ocr", notices)
         except (LablupError, OcrError) as exc:
             code = exc.code if isinstance(exc, LablupError) else str(exc)
