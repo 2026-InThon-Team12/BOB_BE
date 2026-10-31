@@ -254,7 +254,7 @@ def patch_item(item_id: str, body: ItemPatch, session: DB, guest: Owner, today: 
     lock_owner(session, guest)
     item = owned(session, Item, item_id, guest.id)
     simulation = session.scalar(select(Simulation).where(Simulation.item_id == item.id))
-    if today >= simulation.start_date or item.decision == "BUY":
+    if today >= simulation.start_date or item.decision in ("BUY", "GIVE_UP"):
         raise AppError(409, "SIMULATION_FROZEN", "시뮬레이션 시작 후에는 등록 정보를 변경할 수 없습니다.")
     updates = body.model_dump(exclude_unset=True)
     if not updates or any(
@@ -314,7 +314,12 @@ def save_answer(
         raise AppError(409, "ADAPTIVE_QUESTION_REQUIRED", "생성된 구매 전 질문 ID로 답변해 주세요.")
     if answer_date != today:
         raise AppError(409, "ANSWER_DATE_INVALID", "오늘 날짜의 답변만 작성하거나 수정할 수 있습니다.")
-    if simulation.ended_early_on or today not in observation_dates(session, simulation):
+    item = session.get(Item, simulation.item_id)
+    if (
+        item.decision in ("BUY", "GIVE_UP")
+        or simulation.ended_early_on
+        or today not in observation_dates(session, simulation)
+    ):
         raise AppError(409, "SIMULATION_NOT_ACTIVE", "진행 중인 시뮬레이션만 응답할 수 있습니다.")
     answer = session.scalar(
         select(DailyAnswer).where(
@@ -350,15 +355,6 @@ def decide(
     lock_owner(session, guest)
     item = owned(session, Item, item_id, guest.id)
     simulation = session.scalar(select(Simulation).where(Simulation.item_id == item.id))
-    if body.decision == "HOLD" and idempotency_key:
-        previous = session.scalar(
-            select(SimulationExtension).where(
-                SimulationExtension.simulation_id == simulation.id,
-                SimulationExtension.idempotency_key == idempotency_key,
-            )
-        )
-        if previous:
-            return item_view(session, item, today)
     if body.decision != "BUY" and (body.purchased_on is not None or body.actual_price is not None):
         raise AppError(422, "INVALID_DECISION", "구매 정보는 구매 결정에만 입력합니다.")
     if item.decision in ("BUY", "GIVE_UP"):
@@ -371,8 +367,17 @@ def decide(
             ):
                 raise AppError(409, "DECISION_FINAL", "확정한 구매 정보를 변경할 수 없습니다.")
         return item_view(session, item, today)
-    if body.decision != "BUY" and today < simulation.end_date:
-        raise AppError(409, "SIMULATION_NOT_COMPLETE", "시뮬레이션 종료 후 보류하거나 포기할 수 있습니다.")
+    if body.decision == "HOLD" and idempotency_key:
+        previous = session.scalar(
+            select(SimulationExtension).where(
+                SimulationExtension.simulation_id == simulation.id,
+                SimulationExtension.idempotency_key == idempotency_key,
+            )
+        )
+        if previous:
+            return item_view(session, item, today)
+    if body.decision == "HOLD" and today < simulation.end_date:
+        raise AppError(409, "SIMULATION_NOT_COMPLETE", "시뮬레이션 종료 후 보류할 수 있습니다.")
     if body.decision == "HOLD":
         if not idempotency_key:
             raise AppError(422, "IDEMPOTENCY_KEY_REQUIRED", "7일 연장 요청에는 Idempotency-Key가 필요합니다.")

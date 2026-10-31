@@ -207,18 +207,25 @@ def aggregate_responses(session, simulation, today, request):
 
 
 def local_result(session, simulation, today):
-    from app.services.simulations import observation_dates, simulation_status
+    from app.services.simulations import (
+        observation_dates,
+        simulation_status,
+        early_termination,
+        observation_end,
+    )
     from app.services.reports import reason_statistics
 
     data = simulation.local_result or {}
     expected = data.get("expected_used_days")
     answered, unsure = data.get("answered_days", 0), data.get("unsure_days", 0)
-    stop = min(today, simulation.ended_early_on) if simulation.ended_early_on else today
+    item = session.get(Item, simulation.item_id)
+    stopped_on, termination_reason = early_termination(simulation, item)
+    stop = min(today, stopped_on) if stopped_on else today
     observed = sum(day <= stop for day in observation_dates(session, simulation))
-    status = simulation_status(simulation, today)
+    status = simulation_status(simulation, today, item)
     reason = (
-        "EARLY_PURCHASE"
-        if simulation.ended_early_on
+        termination_reason
+        if termination_reason
         else "NO_OBSERVATION_PERIOD"
         if not simulation.duration_days
         else "SIMULATION_NOT_COMPLETE"
@@ -232,12 +239,14 @@ def local_result(session, simulation, today):
         else None
     )
     item = session.get(Item, simulation.item_id)
-    return {
+    result = {
         "simulation_id": simulation.id,
         "status": status,
         "question_mode": "LOCAL",
         "start_date": simulation.start_date,
         "end_date_exclusive": simulation.end_date,
+        "observation_end_date_exclusive": observation_end(simulation, item),
+        "termination_reason": termination_reason,
         "duration_days": simulation.duration_days,
         "observed_days": observed,
         "answered_days": answered,
@@ -245,7 +254,7 @@ def local_result(session, simulation, today):
         "unused_days": None,
         "unsure_days": unsure,
         "unanswered_days": max(0, observed - answered),
-        "pending_days": 0 if simulation.ended_early_on else simulation.duration_days - observed,
+        "pending_days": 0 if stopped_on else simulation.duration_days - observed,
         "definite_answer_days": answered - unsure,
         "answer_coverage": (answered - unsure) / simulation.duration_days if simulation.duration_days else 0,
         "expected_usage_rate": expected / 30 if expected is not None else None,
@@ -272,6 +281,21 @@ def local_result(session, simulation, today):
         "prediction_window_days": 30,
         "pre_purchase_baseline": None,
     }
+    result["answer_state"] = "AGGREGATED" if data else "CLIENT_MANAGED"
+    if termination_reason == "EARLY_GIVE_UP" and not data:
+        # Device answers were never sent. Zero would falsely assert no answers.
+        for key in (
+            "answered_days",
+            "unsure_days",
+            "unanswered_days",
+            "definite_answer_days",
+            "answer_coverage",
+        ):
+            result[key] = None
+        result["response_summary"] = (
+            "기간 중 포기했어요. 질문과 답변은 기기에 보존되며 서버는 미전송 응답 수를 알 수 없어요."
+        )
+    return result
 
 
 class SummaryProposal(RequestModel):

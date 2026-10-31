@@ -280,10 +280,17 @@ def save_answer(session: Session, guest_id: str, question_id: str, today: date, 
 
 
 def adaptive_result(session: Session, simulation: Simulation, today: date) -> dict:
-    from app.services.simulations import observation_dates, simulation_status
+    from app.services.simulations import (
+        observation_dates,
+        simulation_status,
+        early_termination,
+        observation_end,
+    )
     from app.services.reports import item_reasons, reason_statistics
 
-    stop = min(today, simulation.ended_early_on) if simulation.ended_early_on else today
+    item = session.get(Item, simulation.item_id)
+    stopped_on, termination_reason = early_termination(simulation, item)
+    stop = min(today, stopped_on) if stopped_on else today
     dates = [day for day in observation_dates(session, simulation) if day <= stop]
     rows = session.execute(
         select(SimulationQuestion, SimulationQuestionAnswer)
@@ -297,10 +304,10 @@ def adaptive_result(session: Session, simulation: Simulation, today: date) -> di
     snapshot = baseline(session, simulation, stop)
     forecast = snapshot["forecast"]
     expected = forecast["expected_used_days"] if forecast else None
-    status = simulation_status(simulation, today)
+    status = simulation_status(simulation, today, item)
     reason = (
-        "EARLY_PURCHASE"
-        if simulation.ended_early_on
+        termination_reason
+        if termination_reason
         else "SIMULATION_NOT_COMPLETE"
         if status != "COMPLETED"
         else "FORECAST_REQUIRED"
@@ -327,6 +334,8 @@ def adaptive_result(session: Session, simulation: Simulation, today: date) -> di
         "question_mode": "ADAPTIVE",
         "start_date": simulation.start_date,
         "end_date_exclusive": simulation.end_date,
+        "observation_end_date_exclusive": observation_end(simulation, item),
+        "termination_reason": termination_reason,
         "duration_days": simulation.duration_days,
         "observed_days": len(dates),
         "answered_days": len(answers),
@@ -334,7 +343,7 @@ def adaptive_result(session: Session, simulation: Simulation, today: date) -> di
         "unused_days": None,
         "unsure_days": unsure,
         "unanswered_days": len(dates) - len(answers),
-        "pending_days": 0 if simulation.ended_early_on else simulation.duration_days - len(dates),
+        "pending_days": 0 if stopped_on else simulation.duration_days - len(dates),
         "definite_answer_days": definite,
         "answer_coverage": definite / simulation.duration_days if simulation.duration_days else 0,
         "expected_usage_rate": expected / 30 if expected is not None else None,

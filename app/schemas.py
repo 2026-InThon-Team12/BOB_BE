@@ -118,7 +118,7 @@ class AnswerOption(BaseModel):
     label: str
 
 
-SimulationStatus = Literal["SCHEDULED", "ACTIVE", "COMPLETED", "EARLY_PURCHASED", "ON_HOLD"]
+SimulationStatus = Literal["SCHEDULED", "ACTIVE", "COMPLETED", "EARLY_PURCHASED", "EARLY_GIVE_UP", "ON_HOLD"]
 
 
 class SimulationSummary(BaseModel):
@@ -126,6 +126,8 @@ class SimulationSummary(BaseModel):
     status: SimulationStatus
     start_date: date
     end_date_exclusive: date
+    observation_end_date_exclusive: date | None = None
+    termination_reason: Literal["EARLY_PURCHASE", "EARLY_GIVE_UP"] | None = None
     duration_days: int
     observation_dates: list[date] = Field(default_factory=list)
     measurement_question: str
@@ -141,16 +143,18 @@ class SimulationResult(BaseModel):
     status: SimulationStatus
     start_date: date
     end_date_exclusive: date
+    observation_end_date_exclusive: date | None = None
+    termination_reason: Literal["EARLY_PURCHASE", "EARLY_GIVE_UP"] | None = None
     duration_days: int
     observed_days: int
-    answered_days: int
+    answered_days: int | None
     expected_used_days: int | None
     unused_days: int | None
-    unsure_days: int
-    unanswered_days: int
+    unsure_days: int | None
+    unanswered_days: int | None
     pending_days: int
-    definite_answer_days: int
-    answer_coverage: float
+    definite_answer_days: int | None
+    answer_coverage: float | None
     expected_usage_rate: float | None
     expected_cost_per_used_day: int | None
     price_snapshot: int
@@ -158,6 +162,7 @@ class SimulationResult(BaseModel):
     comparison_reason: str | None
     answer_timeline: list[dict] = Field(default_factory=list)
     response_summary: str = ""
+    answer_state: Literal["SERVER_RECORDED", "CLIENT_MANAGED", "AGGREGATED"] = "SERVER_RECORDED"
     purchase_reasons: list[PurchaseReason] = Field(default_factory=list)
     reason_history: list[dict] = Field(default_factory=list)
     metric_unit: str = "usage_days"
@@ -215,6 +220,7 @@ class ItemOutput(BaseModel):
     wallet_comparison: dict | None = None
     source: ItemSource
     decision: Literal["BUY", "HOLD", "GIVE_UP"] | None
+    decided_on: date | None = None
     simulation: SimulationSummary
     purchase: PurchaseOutput | None
 

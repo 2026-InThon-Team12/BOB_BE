@@ -47,9 +47,24 @@ def observation_dates(session: Session, simulation: Simulation) -> list[date]:
     return sorted(set(dates))
 
 
-def simulation_status(simulation: Simulation, today: date) -> str:
+def early_termination(simulation: Simulation, item: Item) -> tuple[date | None, str | None]:
+    """GIVE_UP uses its immutable decision date; ended_early_on remains purchase-only."""
+    if item.decision == "GIVE_UP" and item.decided_on is not None and item.decided_on < simulation.end_date:
+        return item.decided_on, "EARLY_GIVE_UP"
     if simulation.ended_early_on is not None:
-        return "EARLY_PURCHASED"
+        return simulation.ended_early_on, "EARLY_PURCHASE"
+    return None, None
+
+
+def observation_end(simulation: Simulation, item: Item) -> date:
+    stopped_on, _ = early_termination(simulation, item)
+    return min(simulation.end_date, stopped_on + timedelta(days=1)) if stopped_on else simulation.end_date
+
+
+def simulation_status(simulation: Simulation, today: date, item: Item) -> str:
+    _, reason = early_termination(simulation, item)
+    if reason:
+        return "EARLY_GIVE_UP" if reason == "EARLY_GIVE_UP" else "EARLY_PURCHASED"
     if today < simulation.start_date:
         return "SCHEDULED"
     if simulation.resume_on and today < simulation.resume_on:
@@ -66,9 +81,9 @@ def simulation_result(session: Session, simulation: Simulation, today: date) -> 
 
     if is_adaptive(simulation):
         return adaptive_result(session, simulation, today)
-    last_day = min(today, simulation.end_date - timedelta(days=1))
-    if simulation.ended_early_on is not None:
-        last_day = min(last_day, simulation.ended_early_on)
+    item = session.get(Item, simulation.item_id)
+    stopped_on, termination_reason = early_termination(simulation, item)
+    last_day = min(today, observation_end(simulation, item) - timedelta(days=1))
     observed = [day for day in observation_dates(session, simulation) if day <= last_day]
     observed_days = len(observed)
     answers = list(
@@ -83,15 +98,15 @@ def simulation_result(session: Session, simulation: Simulation, today: date) -> 
     no = sum(answer.usage_answer == "NO" for answer in answers)
     unsure = sum(answer.usage_answer == "UNSURE" for answer in answers)
     definite = yes + no
-    status = simulation_status(simulation, today)
+    status = simulation_status(simulation, today, item)
     enough = definite * 10 >= simulation.duration_days * 7
     comparable = status == "COMPLETED" and enough
     reason = (
         None
         if comparable
         else (
-            "EARLY_PURCHASE"
-            if status == "EARLY_PURCHASED"
+            termination_reason
+            if termination_reason
             else "SIMULATION_NOT_COMPLETE"
             if status != "COMPLETED"
             else "INSUFFICIENT_ANSWERS"
@@ -122,6 +137,8 @@ def simulation_result(session: Session, simulation: Simulation, today: date) -> 
         "status": status,
         "start_date": simulation.start_date,
         "end_date_exclusive": simulation.end_date,
+        "observation_end_date_exclusive": observation_end(simulation, item),
+        "termination_reason": early_termination(simulation, item)[1],
         "duration_days": simulation.duration_days,
         "observed_days": observed_days,
         "answered_days": len(answers),
@@ -129,7 +146,7 @@ def simulation_result(session: Session, simulation: Simulation, today: date) -> 
         "unused_days": no,
         "unsure_days": unsure,
         "unanswered_days": max(0, observed_days - len(answers)),
-        "pending_days": 0 if simulation.ended_early_on else simulation.duration_days - observed_days,
+        "pending_days": 0 if stopped_on else simulation.duration_days - observed_days,
         "definite_answer_days": definite,
         "answer_coverage": definite / simulation.duration_days if simulation.duration_days else 0,
         "expected_usage_rate": yes / definite if definite else None,
@@ -225,18 +242,28 @@ def item_view(session: Session, item: Item, today: date) -> dict:
         "wallet_comparison": compare_wallet(session, item.guest_id, today, item.price),
         "source": item.source,
         "decision": item.decision,
+        "decided_on": item.decided_on,
         "simulation": {
             "question_mode": {"pre-v1": "ADAPTIVE", "local-v1": "LOCAL"}.get(
                 simulation.question_version, "LEGACY"
             ),
-            "current_day": sum(day <= today for day in observation_dates(session, simulation)),
+            "current_day": sum(
+                day <= today and day < observation_end(simulation, item)
+                for day in observation_dates(session, simulation)
+            ),
             "question": "" if simulation.question_version == "pre-v1" else simulation.measurement_question,
             "id": simulation.id,
-            "status": simulation_status(simulation, today),
+            "status": simulation_status(simulation, today, item),
             "start_date": simulation.start_date,
             "end_date_exclusive": simulation.end_date,
+            "observation_end_date_exclusive": observation_end(simulation, item),
+            "termination_reason": early_termination(simulation, item)[1],
             "duration_days": simulation.duration_days,
-            "observation_dates": observation_dates(session, simulation),
+            "observation_dates": [
+                day
+                for day in observation_dates(session, simulation)
+                if day < observation_end(simulation, item)
+            ],
             "measurement_question": simulation.measurement_question,
             "supplemental_question": simulation.supplemental_question,
             "answer_options": ANSWER_OPTIONS,
@@ -257,7 +284,7 @@ def get_today_cards(session: Session, guest_id: str, today: date, include_answer
         .order_by(Item.created_at, Item.id)
     ).all()
     for item, simulation in rows:
-        status = simulation_status(simulation, today)
+        status = simulation_status(simulation, today, item)
         if (
             status == "ACTIVE"
             and simulation.question_version not in ("pre-v1", "local-v1")
@@ -280,7 +307,10 @@ def get_today_cards(session: Session, guest_id: str, today: date, include_answer
                 "answer_options": ANSWER_OPTIONS,
                 "question": simulation.measurement_question,
                 "category": item.category,
-                "current_day": sum(day <= today for day in observation_dates(session, simulation)),
+                "current_day": sum(
+                    day <= today and day < observation_end(simulation, item)
+                    for day in observation_dates(session, simulation)
+                ),
                 "duration_days": simulation.duration_days,
                 "calibration": calibration,
                 "answer": answered.usage_answer if answered else None,
@@ -297,6 +327,7 @@ def get_today_cards(session: Session, guest_id: str, today: date, include_answer
                     "item_id": item.id,
                     "name": item.name,
                     "decision": item.decision,
+                    "decided_on": item.decided_on,
                     "result": simulation_result(session, simulation, today),
                 }
             )
