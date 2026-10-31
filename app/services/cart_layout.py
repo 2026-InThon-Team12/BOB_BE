@@ -11,7 +11,7 @@ from statistics import median
 
 from PIL import Image
 
-from app.services.cart_geometry import selectors
+from app.services.cart_geometry import Selector, selectors
 from app.services.ocr_layout import Line, group_words, money_values, normalized
 
 
@@ -116,6 +116,37 @@ def horizontal_separators(image: Image.Image) -> list[int]:
         return boundaries
 
 
+def group_heading(image: Image.Image, control: Selector, end: int, lines: list[Line]) -> bool:
+    """A short seller row with a right-side action and divider is not a product.
+
+    Do not infer item selection from its parent seller checkbox. A compact item
+    without a price is retained unless these independent header cues agree.
+    """
+    height = control.bottom - control.top
+    left, right = control.column_left, control.column_right
+    width = right - left
+    if not control.bottom < end <= control.top + 3 * height:
+        return False
+    row = [line for line in lines if control.top - height / 2 <= line.top < control.bottom]
+    label = any(
+        control.right <= line.left < left + width * 0.5 and 2 <= len(normalized(line.text)) <= 16
+        for line in row
+    )
+    action = any(line.left > left + width * 0.65 and len(normalized(line.text)) >= 3 for line in row)
+    if not label or not action:
+        return False
+    with (
+        image.crop((left, control.bottom, right, end))
+        .convert("L")
+        .resize((100, end - control.bottom)) as strip
+    ):
+        pixels = strip.load()
+        background = median([pixels[x, y] for x in (0, 99) for y in range(strip.height)])
+        return any(
+            sum(abs(pixels[x, y] - background) > 50 for x in range(8, 92)) >= 80 for y in range(strip.height)
+        )
+
+
 def card_price_values(text: str) -> set[int]:
     compact = re.sub(r"\s+", "", text)
     if re.search(r"[$€¥]|USD|JPY|EUR|CNY|개월", compact, re.IGNORECASE):
@@ -204,7 +235,10 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
             (
                 line.top
                 for line in region
-                if re.search(r"쿠폰선택|총\d+개상품|합계|결제하기|주문하기|구매하기", normalized(line.text))
+                if re.search(
+                    r"쿠폰선택|총\d+개상품|합계|총배송비|총주문|예상주문|주문예상|결제하기|주문하기|구매하기",
+                    normalized(line.text),
+                )
             ),
             end,
         )
@@ -214,6 +248,8 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
             values = card_price_values(line.text)
             if len(values) == 1 and not _crossed_out(line, image):
                 price_lines.append((line, next(iter(values))))
+        if not price_lines and group_heading(image, control, end, region):
+            continue
         first_price = min((line.top for line, _ in price_lines), default=end)
         descriptions = [
             line
@@ -233,7 +269,10 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
             if control.selected is not False:
                 cards.append(CartCard([], None, None, (left, start, right, end)))
             continue
-        amounts = {price for _, price in price_lines}
+        discounted = [(line, value) for line, value in price_lines if re.search(r"\d{1,2}\s*%", line.text)]
+        # An explicit discounted item price outranks isolated amounts in a
+        # sticky checkout panel whose label may not have been read by OCR.
+        amounts = {price for _, price in (discounted or price_lines)}
         price = next(iter(amounts)) if len(amounts) == 1 else None
         evidence = max(
             (line for line, value in price_lines if value == price),

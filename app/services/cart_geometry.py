@@ -171,6 +171,29 @@ def selectors(
         else:
             group.append(box)
     strong = [g for g in groups if len(g) >= 2]
+    if strong:
+        # Repeated tiny glyphs inside payment/delivery badges are not another
+        # product column when much larger, consistent controls sit on an edge.
+        edge_groups = [
+            g
+            for g in strong
+            if median(b.left for b in g) < image.width * 0.18
+            or median(b.right for b in g) > image.width * 0.82
+        ]
+        if edge_groups:
+            control_size = max(median(b.right - b.left for b in g) for g in edge_groups)
+            large = [g for g in edge_groups if median(b.right - b.left for b in g) == control_size]
+            strong = [
+                g
+                for g in strong
+                if median(b.right - b.left for b in g) >= control_size * 0.5
+                or any(
+                    abs(a.top - b.top) < max(a.bottom - a.top, b.bottom - b.top)
+                    for controls in large
+                    for a in controls
+                    for b in g
+                )
+            ]
     if not strong and len(groups) > 1 and all(len(g) == 1 for g in groups):
         # A one-row grid is validated by the same alignment and pitch checks below.
         strong = groups
