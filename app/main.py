@@ -18,7 +18,9 @@ logger = logging.getLogger("bob.api")
 
 def create_app(settings: Settings | None = None, session_factory=None) -> FastAPI:
     settings = settings or get_settings()
-    factory = session_factory or create_session_factory(settings.database_url)
+    factory = session_factory or create_session_factory(
+        settings.database_url, null_pool=settings.database_pool_mode == "null"
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -28,6 +30,9 @@ def create_app(settings: Settings | None = None, session_factory=None) -> FastAP
 
     application = FastAPI(title="BOB API", version="0.1.0", lifespan=lifespan)
     application.state.session_factory = factory
+    from app.integrations.firebase import FirebaseSender
+
+    application.state.notification_sender = FirebaseSender(settings)
     application.dependency_overrides[get_settings] = lambda: settings
     application.add_middleware(
         CORSMiddleware,
@@ -100,6 +105,9 @@ def create_app(settings: Settings | None = None, session_factory=None) -> FastAP
     from app.api.local_questions import router as local_questions_router
     from app.api.goal_shelf import router as goal_shelf_router
     from app.api.goal_setup import router as goal_setup_router
+    from app.api.cron import router as cron_router
+
+    application.include_router(cron_router)
 
     for router in (
         core_router,

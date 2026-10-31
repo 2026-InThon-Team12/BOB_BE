@@ -12,3 +12,6 @@ credentials/
 tmp/
 output/
 *.pdf
+
+.vercel/
+vendor/

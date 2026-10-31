@@ -1,0 +1,17 @@
+.git/
+.venv/
+.env
+.env.*
+credentials/
+vendor/
+tmp/
+output/
+tests/
+docs/
+.github/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+**/*.egg-info/
+**/*.pdf
+**/*.sqlite*

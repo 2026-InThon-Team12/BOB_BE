@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "fastapi",
+  "regions": ["sin1"],
+  "functions": {
+    "app/main.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{.git/**,.venv/**,.env*,credentials/**,tmp/**,output/**,tests/**,docs/**,.github/**,**/__pycache__/**,**/*.pdf}"
+    }
+  },
+  "crons": [
+    {"path": "/internal/notifications", "schedule": "0 11 * * *"}
+  ]
+}

@@ -10,6 +10,11 @@
 
 ## 실행
 
+공개 서버: [API 문서](https://bob-be.vercel.app/docs),
+[DB 연결 상태](https://bob-be.vercel.app/health/ready).
+Android Base URL은 `https://bob-be.vercel.app/api/v1/`이다.
+무료 호스팅 설정·업로드 제한·재배포 절차는 [Vercel 배포 문서](docs/vercel-deployment.md)를 참고한다.
+
 Docker Engine과 Docker Compose 2.24 이상이 필요합니다. 아래 명령은 저장소 루트에서 실행합니다. 처음 설정할 때 `.env.example`을 `.env`로 복사하고 필요한 값을 채웁니다.
 
 ```powershell

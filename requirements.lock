@@ -1,4 +1,5 @@
 # Resolved on Python 3.12; runtime and test dependencies.
+tesserocr==2.12.0; sys_platform == "linux"
 CacheControl==0.14.4
 Mako==1.4.3
 MarkupSafe==3.0.4

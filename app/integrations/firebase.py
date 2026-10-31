@@ -7,6 +7,7 @@ The worker, not the HTTP client, decides which known failures can be retried.
 
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -106,7 +107,9 @@ class FirebaseSender:
                     options: dict[str, Any] = {"httpTimeout": 30}
                     if self.settings.firebase_project_id:
                         options["projectId"] = self.settings.firebase_project_id
-                    if self.settings.google_application_credentials:
+                    if self.settings.firebase_service_account_json:
+                        credential = credentials.Certificate(json.loads(self.settings.firebase_service_account_json))
+                    elif self.settings.google_application_credentials:
                         credential = credentials.Certificate(self.settings.google_application_credentials)
                     else:
                         credential = credentials.ApplicationDefault()
@@ -121,8 +124,8 @@ class FirebaseSender:
             return project_id, access_token
         except PushFailure:
             raise
-        except Exception as exc:
-            raise PushFailure("FIREBASE_CREDENTIAL_ERROR") from exc
+        except Exception:
+            raise PushFailure("FIREBASE_CREDENTIAL_ERROR") from None
 
     def send(
         self,

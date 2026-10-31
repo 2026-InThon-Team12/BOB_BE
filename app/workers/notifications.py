@@ -42,6 +42,7 @@ class TickResult:
     pending: int = 0
     unknown: int = 0
     skipped: int = 0
+    deferred: int = 0
 
 
 def _aware(value: datetime) -> datetime:
@@ -190,7 +191,9 @@ def run_once(
     now: datetime | None = None,
     settings: Settings | None = None,
     cards_provider: Callable[[Session, str, date], dict] | None = None,
+    max_runtime_seconds: float | None = None,
 ) -> TickResult:
+    started_at = time.monotonic()
     settings = settings or get_settings()
     fixed_now = now is not None
     now = _aware(now or utc_now()).astimezone(timezone.utc)
@@ -221,7 +224,12 @@ def run_once(
         if local_now.hour < settings.notifications_hour:
             return result
         guest_ids = list(session.scalars(select(Device.guest_id).where(Device.enabled.is_(True))))
-    for guest_id in guest_ids:
+    for index, guest_id in enumerate(guest_ids):
+        # A serverless invocation must leave time for the final send and commit.
+        # Unclaimed work remains eligible for an authenticated manual rerun.
+        if max_runtime_seconds is not None and time.monotonic() - started_at >= max_runtime_seconds:
+            result.deferred = len(guest_ids) - index
+            break
         claim = _claim(factory, guest_id, local_date, now, cards_provider)
         if claim is None:
             continue

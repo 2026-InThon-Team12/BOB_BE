@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import subprocess
+import sys
 import warnings
 from collections.abc import Callable
 from typing import Annotated, Literal
@@ -153,9 +154,14 @@ def extract_ocr(image: Image.Image, settings: Settings) -> str:
     """Use stdin/stdout, with no upload files, shell, or persistent image storage."""
     image_bytes = io.BytesIO()
     image.save(image_bytes, format="PNG")
+    command = (
+        [sys.executable, "-m", "app.integrations.ocr_worker", settings.tessdata_dir]
+        if settings.ocr_backend == "python"
+        else [settings.tesseract_cmd, "stdin", "stdout", "-l", "kor+eng", "tsv"]
+    )
     try:
         completed = subprocess.run(
-            [settings.tesseract_cmd, "stdin", "stdout", "-l", "kor+eng", "tsv"],
+            command,
             input=image_bytes.getvalue(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
