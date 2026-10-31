@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     lablup_api_key: str | None = Field(default=None, repr=False)
     lablup_base_url: str = "https://api.console.lablup.ai/anthropic"
     lablup_model_id: str = "DeepSeek-V4.1-Flash-B300"
+    # Discount extraction only; cart screenshots always try vision first.
     lablup_vision_enabled: bool = False
     ai_timeout_seconds: float = Field(default=30, gt=0, le=120)
     max_image_bytes: int = Field(default=10_485_760, gt=0, le=20_971_520)

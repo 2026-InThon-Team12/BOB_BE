@@ -48,7 +48,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `LABLUP_API_KEY` | 서버 전용 API 키 |
 | `LABLUP_BASE_URL` | 기본값 `https://api.console.lablup.ai/anthropic` |
 | `LABLUP_MODEL_ID` | 기본값 `DeepSeek-V4.1-Flash-B300`; Connect의 실제 호출 ID와 일치해야 함 |
-| `LABLUP_VISION_ENABLED` | 기본값 `false`. 실제 이미지 요청 검증 후에만 `true` |
+| `LABLUP_VISION_ENABLED` | 할인 조건 추출용 설정. 장바구니 사진은 이 값과 무관하게 이미지 직접 분석 우선 |
 | `FIREBASE_PROJECT_ID` | Android 앱과 동일한 Firebase 프로젝트 ID |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Firebase 서비스 계정 JSON 파일 경로 |
 | `CORS_ORIGINS` | 웹 클라이언트 사용 시 허용할 출처의 JSON 배열 |
@@ -59,7 +59,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 docker compose exec api python -m scripts.check_lablup
 ```
 
-서버 키로 텍스트 요청과 무작위 숫자 이미지 요청을 실제로 보냅니다. `vision_verified=true`를 확인한 경우에만 `.env`의 `LABLUP_VISION_ENABLED=true`를 설정하고 `docker compose up -d api worker`로 반영합니다. 확인되지 않으면 한국어·영어 OCR 결과를 같은 Lablup 모델에 전달합니다. 다른 AI 공급자로 자동 전환하지 않습니다.
+선택적 진단 도구로 텍스트와 합성 이미지 요청을 보냅니다. 장바구니 사진은 기존 `LABLUP_VISION_ENABLED` 값과 무관하게 DeepSeek에 이미지를 먼저 전달합니다. 이미지 입력 미지원을 명시한 400/415/422 응답일 때만 Tesseract OCR 결과를 같은 모델에 전달합니다. 일반 요청 오류, 인증 오류, 시간 초과, 서버 오류, 잘못된 분석 결과에는 OCR로 재시도하지 않습니다. 다른 AI 공급자로 전환하지 않습니다. 운영 반영에는 BE 재배포가 필요합니다.
 
 AI 결과는 등록 초안입니다. 가격을 확인할 수 없으면 `null`을 반환하며, 사용자가 가격·카테고리·구매 이유를 확인한 후 등록해야 합니다. AI 실패 시 `warnings`와 직접 입력 경로를 제공합니다. 스크린샷은 JPEG/PNG/WebP 한 장, 기본 10 MiB까지 받으며 원본을 장기 보관하지 않습니다.
 

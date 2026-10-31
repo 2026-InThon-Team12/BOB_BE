@@ -318,7 +318,8 @@ def test_vision_crop_is_product_region_and_ocr_never_guesses_image():
         assert thumbnail.size == (50, 50)
     config.lablup_vision_enabled = False
     result = AiService(config, client=Fake(), ocr=lambda *_: "컵 1000원").extract_cart(data.getvalue())
-    assert result.items[0].image_crop is None and "PRODUCT_IMAGE_UNAVAILABLE" in result.warnings
+    assert result.analysis_method == "vision"
+    assert result.items[0].image_crop is not None
 
 
 def test_shelf_displays_on_achievement_without_purchase_and_replays_once(

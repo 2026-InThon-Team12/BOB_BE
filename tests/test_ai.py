@@ -105,6 +105,8 @@ def test_ocr_path_sends_only_text_and_preserves_unknown_price():
 
     def handler(request):
         requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(400, json={"error": "image input unsupported"})
         return response_for(proposal(price=None))
 
     ai = service(handler)
@@ -113,7 +115,7 @@ def test_ocr_path_sends_only_text_and_preserves_unknown_price():
     assert result.analysis_method == "ocr"
     assert result.items[0].price is None
     assert result.items[0].source == ItemSource.SCREENSHOT
-    assert all(block["type"] == "text" for block in requests[0]["messages"][0]["content"])
+    assert all(block["type"] == "text" for block in requests[1]["messages"][0]["content"])
     assert "CONFIRM_EXTRACTED_ITEMS" in result.warnings
 
 
@@ -161,9 +163,10 @@ def test_missing_ocr_engine_returns_actionable_fallback(monkeypatch):
         raise FileNotFoundError("not installed")
 
     monkeypatch.setattr(subprocess, "run", missing_engine)
-    result = AiService(settings()).extract_cart(png_bytes())
+    ai = service(lambda request: httpx.Response(400, json={"error": "image input unsupported"}))
+    result = ai.extract_cart(png_bytes())
     assert result.items == []
-    assert result.warnings == ["OCR_UNAVAILABLE", "ENTER_ITEMS_MANUALLY"]
+    assert result.warnings == ["VISION_UNAVAILABLE_USING_OCR", "OCR_UNAVAILABLE", "ENTER_ITEMS_MANUALLY"]
 
 
 def test_ocr_retains_word_positions_without_empty_hierarchy(monkeypatch):
@@ -193,3 +196,32 @@ def test_redirect_is_not_followed_and_does_not_expose_credentials():
     with pytest.raises(LablupError, match="AI_UNAVAILABLE"):
         client.message(system="test", content=[{"type": "text", "text": "test"}])
     assert len(seen) == 1
+
+
+@pytest.mark.parametrize("legacy_flag", [False, True])
+def test_cart_always_tries_image_first(legacy_flag):
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return response_for(proposal())
+
+    ai = service(handler, lablup_vision_enabled=legacy_flag)
+    ai.ocr = lambda *_: pytest.fail("OCR must not run after vision succeeds")
+    result = ai.extract_cart(png_bytes())
+    assert result.analysis_method == "vision"
+    assert len(calls) == 1
+    assert calls[0]["messages"][0]["content"][0]["type"] == "image"
+
+
+@pytest.mark.parametrize("status,message", [
+    (400, "invalid image dimensions"), (415, "unsupported image format"),
+    (422, "invalid request schema"), (401, "unauthorized"),
+    (429, "rate limit"), (500, "server error"),
+])
+def test_other_failures_do_not_trigger_ocr(status, message):
+    ai = service(lambda request: httpx.Response(status, json={"error": message}))
+    ai.ocr = lambda *_: pytest.fail("Only image capability errors may trigger OCR")
+    result = ai.extract_cart(png_bytes())
+    assert result.analysis_method == "manual"
+    assert "VISION_UNAVAILABLE_USING_OCR" not in result.warnings

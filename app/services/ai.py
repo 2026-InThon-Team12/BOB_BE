@@ -260,29 +260,28 @@ class AiService:
         mime, image = validate_image(data, self.settings.max_image_bytes)
         notices = []
         try:
-            if self.settings.lablup_vision_enabled:
-                try:
-                    proposed = self._propose(
-                        [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime,
-                                    "data": base64.b64encode(data).decode("ascii"),
-                                },
+            try:
+                proposed = self._propose(
+                    [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime,
+                                "data": base64.b64encode(data).decode("ascii"),
                             },
-                            {
-                                "type": "text",
-                                "text": "Extract visible cart items. Use null for unclear prices.",
-                            },
-                        ]
-                    )
-                    return self._cart_result(proposed, "vision", notices, image)
-                except LablupError as exc:
-                    if not exc.image_unsupported:
-                        raise
-                    notices.append("VISION_UNAVAILABLE_USING_OCR")
+                        },
+                        {
+                            "type": "text",
+                            "text": "Extract visible cart items. Use null for unclear prices.",
+                        },
+                    ]
+                )
+                return self._cart_result(proposed, "vision", notices, image)
+            except LablupError as exc:
+                if not exc.image_unsupported:
+                    raise
+                notices.append("VISION_UNAVAILABLE_USING_OCR")
             text = self.ocr(image, self.settings)
             proposed = self._propose(
                 [{"type": "text", "text": "Extract cart items from this OCR word table:\n" + text[:40_000]}]
