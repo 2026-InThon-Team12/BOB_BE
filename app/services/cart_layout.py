@@ -269,8 +269,11 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
             and not card_price_values(line.text)
         ]
         if not descriptions:
-            if control.selected is not False:
-                cards.append(CartCard([], None, None, (left, start, right, end)))
+            # A clearly unchecked row stays excluded even when its title OCR
+            # is unreadable; retain it for an accurate selection summary.
+            cards.append(
+                CartCard([], None, False if control.selected is False else None, (left, start, right, end))
+            )
             continue
         discounted = [(line, value) for line, value in price_lines if re.search(r"\d{1,2}\s*%", line.text)]
         # An explicit discounted item price outranks isolated amounts in a
@@ -278,7 +281,7 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
         amounts = {price for _, price in (discounted or price_lines)}
         price = next(iter(amounts)) if len(amounts) == 1 else None
         evidence = max(
-            (line for line, value in price_lines if value == price),
+            (line for line, value in (discounted or price_lines) if value == price),
             key=lambda line: line.bottom - line.top,
             default=None,
         )

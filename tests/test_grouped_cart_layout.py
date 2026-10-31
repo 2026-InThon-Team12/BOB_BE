@@ -60,6 +60,14 @@ def test_two_different_item_discount_prices_remain_ambiguous():
     assert cards[1].price is None
 
 
+def test_price_recheck_uses_item_discount_not_a_larger_duplicate_total():
+    image, words = grouped_cart()
+    words.append(Line(501, 2100, 1000, 2170, "158,000원"))
+    card = checkbox_cards(image, words, words)[1]
+    assert card.price == 158000
+    assert card.price_evidence.text == "33%158,000원"
+
+
 def test_short_item_without_price_is_not_removed_as_a_seller():
     image, words = grouped_cart()
     words = [w for w in words if w.top < 1565 or w.top >= 1718]

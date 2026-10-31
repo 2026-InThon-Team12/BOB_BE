@@ -23,19 +23,23 @@ class Selector:
     column_right: int = 0
 
 
-def selectors(
-    image: Image.Image, lines: list[Line] | None = None, *, word_level: bool = False
-) -> list[Selector]:
+def _candidate_selectors(image: Image.Image, *, pale: bool = False) -> list[Selector]:
     with image.convert("RGB") as small:
         small.thumbnail((640, 3500))
         width, height = small.size
         rgb = small.load()
         edge = [sum(rgb[x, y]) / 3 for x in (0, width - 1) for y in range(0, height, max(1, height // 30))]
         dark = median(edge) < 128
+        if dark and pale:
+            return []
         with small.convert("L") as gray:
             values = gray.tobytes()
         # Bytes/indices rather than a set of pixel tuples keep memory bounded.
-        mask = bytearray(v > 70 if dark else v < 235 for v in values)
+        # Empty controls can use very pale borders (e.g. luminance 235-240).
+        # Finding the border is separate from deciding whether its centre is
+        # checked; the latter still requires substantial contrast below.
+        foreground_limit = 70 if dark else 245 if pale else 235
+        mask = bytearray(v > foreground_limit if dark else v < foreground_limit for v in values)
         min_size, max_size = max(8, int(width * 0.014)), int(width * 0.12)
         boxes = []
         for seed in range(len(mask)):
@@ -64,7 +68,7 @@ def selectors(
 
             def foreground(x: int, y: int) -> bool:
                 value = values[y * width + x]
-                return value > 70 if dark else value < 235
+                return value > foreground_limit if dark else value < foreground_limit
 
             pad = max(2, size // 5)
             # Circle edges span ~80% of the opposite axis in these outer bands.
@@ -114,6 +118,30 @@ def selectors(
                     state,
                 )
             )
+    return boxes
+
+
+def selectors(
+    image: Image.Image, lines: list[Line] | None = None, *, word_level: bool = False
+) -> list[Selector]:
+    boxes = _candidate_selectors(image)
+    # A permissive luminance pass also picks up badges and background fragments.
+    # Admit ONLY empty outlines from it, keeping existing high-contrast controls.
+    for candidate in _candidate_selectors(image, pale=True):
+        if candidate.selected is not False:
+            continue
+        overlaps = any(
+            max(0, min(candidate.right, b.right) - max(candidate.left, b.left))
+            * max(0, min(candidate.bottom, b.bottom) - max(candidate.top, b.top))
+            > 0.6
+            * min(
+                (candidate.right - candidate.left) * (candidate.bottom - candidate.top),
+                (b.right - b.left) * (b.bottom - b.top),
+            )
+            for b in boxes
+        )
+        if not overlaps:
+            boxes.append(candidate)
     # Internal ticks/dots are not additional selectors.
     boxes = [
         a

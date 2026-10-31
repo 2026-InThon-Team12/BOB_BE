@@ -112,6 +112,33 @@ def test_currency_glyph_missing_from_ocr_is_not_a_second_selector_column():
     assert [(c.selected, c.price) for c in cards] == [(True, 19000), (False, 19100)]
 
 
+@pytest.mark.parametrize("outline", ["#e8ecef", "#eeeeee", "#f0f0f0"])
+@pytest.mark.parametrize("scale", [0.5, 1, 1.5])
+def test_pale_unchecked_borders_are_retained_with_colored_selected_control(outline, scale):
+    image, words = screen()
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((22, 528, 74, 580), fill="white")
+    draw.rounded_rectangle((24, 530, 72, 578), radius=7, fill="white", outline=outline, width=4)
+    # Repeated small badge shapes are distractions, not missing product controls.
+    for y in (155, 605):
+        draw.rectangle((500, y, 516, y + 16), fill="#00aa55")
+    if scale != 1:
+        image = image.resize((round(image.width * scale), round(image.height * scale)))
+        words = [Line(*(round(v * scale) for v in (w.left, w.top, w.right, w.bottom)), w.text) for w in words]
+    cards = checkbox_cards(image, words, words)
+    assert [(c.selected, c.price) for c in cards] == [(True, 19000), (False, 19100)]
+
+
+def test_unchecked_row_without_readable_title_is_counted_but_never_imported():
+    image, words = screen()
+    words = [word for word in words if word.top < 500 or "판매가" in word.text]
+    cards = checkbox_cards(image, words, words)
+    assert len(cards) == 2
+    assert cards[0].selected is True
+    assert cards[1].selected is False
+    assert not cards[1].lines
+
+
 @pytest.mark.parametrize(
     "text",
     [
