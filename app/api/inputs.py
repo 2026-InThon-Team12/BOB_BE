@@ -93,6 +93,7 @@ def share_draft(body: ProductUrlInput, guest: Owner, settings: Config):
         legacy_code = {
             "UNSAFE_PRODUCT_URL": "UNSAFE_SHARE_URL",
             "PRODUCT_URL_UNAVAILABLE": "SHARE_UNAVAILABLE",
+              "PRODUCT_URL_BLOCKED": "SHARE_UNAVAILABLE",
         }.get(exc.code, exc.code)
         raise AppError(exc.status_code, legacy_code, exc.message) from None
 

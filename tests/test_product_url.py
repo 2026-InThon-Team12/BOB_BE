@@ -140,3 +140,44 @@ def test_product_dns_mock_does_not_override_database_resolver(monkeypatch):
     dns(monkeypatch, ["93.184.216.34"])
     assert socket.getaddrinfo is resolver
     assert sharing.public_target("https://shop.example/p")[1] == "93.184.216.34"
+
+
+def test_nested_product_type_array_and_formatted_won(monkeypatch):
+    dns(monkeypatch, ["93.184.216.34"])
+    product = {"@type": ["Product"], "name": "상품", "offers": {"price": "27,500", "priceCurrency": "krw"}}
+    html = '<script type="application/ld+json">' + json.dumps({"@type": "WebPage", "mainEntity": product}) + '</script>'
+    assert sharing.extract_metadata(html, "https://shop.example/p")["price"] == 27500
+
+
+def test_itemprop_price_requires_explicit_currency(monkeypatch):
+    dns(monkeypatch, ["93.184.216.34"])
+    html = '<meta itemprop="name" content="필름"><meta itemprop="price" content="15,900">'
+    assert sharing.extract_metadata(html, "https://shop.example/p")["price"] is None
+    result = sharing.extract_metadata(html + '<meta itemprop="priceCurrency" content="KRW">', "https://shop.example/p")
+    assert result["name"] == "필름" and result["price"] == 15900
+
+
+def test_redirect_to_blocked_store_is_explicit_and_connections_close(monkeypatch):
+    dns(monkeypatch, ["93.184.216.34"])
+    connections = []
+    class Connection:
+        def __init__(self, *_):
+            self.number = len(connections)
+            self.closed = False
+            connections.append(self)
+        def request(self, *_args, **_kwargs):
+            pass
+        def getresponse(self):
+            return self
+        @property
+        def status(self):
+            return 302 if self.number == 0 else 403
+        def getheader(self, name, default=None):
+            return 'https://shop.example/product' if name == 'Location' else default
+        def close(self):
+            self.closed = True
+    monkeypatch.setattr(sharing, 'PinnedConnection', Connection)
+    with pytest.raises(AppError) as error:
+        sharing.fetch_product_html('https://link.example/short')
+    assert error.value.code == 'PRODUCT_URL_BLOCKED'
+    assert len(connections) == 2 and all(c.closed for c in connections)

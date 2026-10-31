@@ -3,6 +3,7 @@
 import http.client
 import ipaddress
 import json
+import re
 import socket
 from socket import getaddrinfo
 import ssl
@@ -67,6 +68,8 @@ def fetch_product_html(url: str) -> tuple[str, str]:
                 },
             )
             response = connection.getresponse()
+            if response.status in (401, 403, 429):
+                raise AppError(422, "PRODUCT_URL_BLOCKED", "쇼핑몰이 자동 상품 조회를 허용하지 않아요. 상품명과 가격을 직접 입력하거나 장바구니 사진으로 등록해 주세요.")
             if response.status in (301, 302, 303, 307, 308):
                 location = response.getheader("Location")
                 if not location:
@@ -75,8 +78,8 @@ def fetch_product_html(url: str) -> tuple[str, str]:
                 continue
             if response.status != 200 or "text/html" not in response.getheader("Content-Type", "").lower():
                 break
-            content = response.read(1_048_577)
-            if len(content) > 1_048_576:
+            content = response.read(4_194_305)
+            if len(content) > 4_194_304:
                 break
             charset = response.headers.get_content_charset() or "utf-8"
             return content.decode(charset, errors="replace"), url
@@ -104,7 +107,7 @@ class ProductMetadata(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == "meta":
-            key = attrs.get("property", attrs.get("name", "")).lower()
+            key = attrs.get("property", attrs.get("name", attrs.get("itemprop", ""))).lower()
             self.meta[key] = attrs.get("content", "")
         if tag == "title":
             self.in_title = True
@@ -118,19 +121,8 @@ class ProductMetadata(HTMLParser):
             self.in_ld = False
             try:
                 data = json.loads("".join(self.ld))
-                candidates = (
-                    data
-                    if isinstance(data, list)
-                    else data.get("@graph", [data])
-                    if isinstance(data, dict)
-                    else []
-                )
-                self.products.extend(
-                    value
-                    for value in candidates
-                    if isinstance(value, dict) and value.get("@type") == "Product"
-                )
-            except (ValueError, TypeError):
+                self.products.extend(product_nodes(data))
+            except (ValueError, TypeError, RecursionError):
                 pass
 
     def handle_data(self, data):
@@ -138,6 +130,25 @@ class ProductMetadata(HTMLParser):
             self.title.append(data)
         if self.in_ld:
             self.ld.append(data)
+
+
+def product_nodes(data, depth=0):
+    """Read nested schema.org mainEntity/@graph without treating offers as products."""
+    if depth > 20:
+        return
+    if isinstance(data, list):
+        for value in data:
+            yield from product_nodes(value, depth + 1)
+    elif isinstance(data, dict):
+        kinds = data.get("@type", [])
+        if isinstance(kinds, str):
+            kinds = [kinds]
+        if isinstance(kinds, list) and "Product" in kinds:
+            yield data
+        else:
+            for value in data.values():
+                if isinstance(value, (dict, list)):
+                    yield from product_nodes(value, depth + 1)
 
 
 def extract_metadata(html: str, url: str) -> dict:
@@ -152,18 +163,21 @@ def extract_metadata(html: str, url: str) -> dict:
     name = next(
         (
             value.strip()
-            for value in (parser.meta.get("og:title"), product.get("name"), "".join(parser.title))
+            for value in (product.get("name"), parser.meta.get("og:title"), parser.meta.get("name"), "".join(parser.title))
             if isinstance(value, str) and value.strip()
         ),
         None,
     )
-    amount = parser.meta.get("product:price:amount", offer.get("price"))
-    currency = parser.meta.get("product:price:currency", offer.get("priceCurrency"))
+    amount = parser.meta.get("product:price:amount", offer.get("price", parser.meta.get("price")))
+    currency = parser.meta.get("product:price:currency", offer.get("priceCurrency", parser.meta.get("pricecurrency")))
     price = None
     try:
-        number = Decimal(str(amount))
+        value = str(amount).strip()
+        if re.fullmatch(r"\d{1,3}(,\d{3})+(\.0+)?", value):
+            value = value.replace(",", "")
+        number = Decimal(value)
         if (
-            currency == "KRW"
+            isinstance(currency, str) and currency.strip().upper() == "KRW"
             and number.is_finite()
             and number == number.to_integral_value()
             and 0 < number <= 1_000_000_000_000
