@@ -107,11 +107,11 @@ def local_pre_question(session, simulation, today, request, ai):
 
 
 def local_post_question(session, purchase, today, request, ai):
+    if today < purchase.review_due_on:
+        raise AppError(409, "NO_QUESTION_DUE", "구매 후 점검일부터 질문을 진행할 수 있습니다.")
     validate_recent(
         request.recent_templates, {**POST_BY_CODE, **swipe.POST_BY_CODE}, purchase.purchased_on, today
     )
-    if today < purchase.purchased_on:
-        raise AppError(409, "NO_QUESTION_DUE", "구매 이후에 질문을 진행할 수 있습니다.")
     context = post.context_for(session, purchase, today)
     candidates = swipe.select_question(swipe.POST_CATALOG, request.recent_templates, context)
     session.commit()

@@ -211,6 +211,7 @@ def test_local_questions_summary_and_purchase_do_not_persist_transcript(
         f"{P}/items/{item['id']}/decision", headers=guest_headers, json={"decision": "BUY"}
     ).json()["purchase"]
     assert client.post(endpoint, headers=guest_headers, json={"responses": records}).status_code == 409
+    today.value += timedelta(days=14)
     generated = client.post(f"{P}/purchases/{bought['id']}/local-question", headers=guest_headers, json={})
     assert generated.status_code == 200 and generated.json()["storage"] == "LOCAL_ONLY"
     assert session.scalar(select(func.count(PurchaseQuestion.id))) == 0

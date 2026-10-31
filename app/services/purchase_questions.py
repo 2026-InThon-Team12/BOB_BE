@@ -245,6 +245,8 @@ def generate_question(
     simulation = session.scalar(select(Simulation).where(Simulation.item_id == purchase.item_id))
     if simulation.question_version == "local-v1":
         raise AppError(409, "LOCAL_STORAGE_REQUIRED", "로컬 질문 API를 사용하고 응답은 기기에 저장해 주세요.")
+    if today < purchase.review_due_on:
+        raise AppError(409, "QUESTION_NOT_DUE", "구매 후 점검일부터 질문을 만들 수 있습니다.")
     existing = session.scalar(
         select(PurchaseQuestion).where(
             PurchaseQuestion.purchase_id == purchase.id, PurchaseQuestion.question_date == today
@@ -252,8 +254,6 @@ def generate_question(
     )
     if existing:
         return existing
-    if today < purchase.purchased_on:
-        raise AppError(409, "QUESTION_NOT_DUE", "구매 이후에 질문을 만들 수 있습니다.")
     context = context_for(session, purchase, today)
     candidates = candidates_for(session, purchase, today, context)
     if not candidates:
@@ -380,6 +380,9 @@ def save_question_answer(
         raise AppError(404, "QUESTION_NOT_FOUND", "질문을 찾을 수 없습니다.")
     if question.question_date != today:
         raise AppError(409, "ANSWER_DATE_INVALID", "오늘 질문의 답변만 작성하거나 수정할 수 있습니다.")
+    purchase = session.get(Purchase, question.purchase_id)
+    if today < purchase.review_due_on:
+        raise AppError(409, "QUESTION_NOT_DUE", "구매 후 점검일부터 답할 수 있습니다.")
     spec = question.answer_spec
     valid = (
         (choice_code in {row["code"] for row in spec["options"]} and number_value is None)
@@ -409,7 +412,7 @@ def daily_purchase_tasks(
     tasks, completed = [], []
     purchases = session.scalars(
         select(Purchase)
-        .where(Purchase.guest_id == guest_id, Purchase.purchased_on <= today)
+        .where(Purchase.guest_id == guest_id, Purchase.review_due_on <= today)
         .order_by(Purchase.purchased_on, Purchase.id)
     )
     for purchase in purchases:

@@ -38,6 +38,7 @@ def test_old_phase_metadata_stays_readable(offset, stages):
 
 def test_all_new_post_questions_are_swipes_and_repeat_is_frozen(client, guest_headers, today, session):
     purchase = purchase_item(client, guest_headers, today)
+    today.value += timedelta(days=14)
     seen = []
     for day in range(10):
         q = generate(client, guest_headers, purchase)
@@ -96,6 +97,7 @@ def test_local_post_uses_three_choices_without_a_separate_frequency_survey(clien
 
 def test_post_question_owner_and_date_protection(client, guest_headers, today):
     purchase = purchase_item(client, guest_headers, today)
+    today.value += timedelta(days=14)
     q = generate(client, guest_headers, purchase)
     foreign = {"Authorization": "Bearer " + client.post(P + "/guest-sessions").json()["access_token"]}
     assert client.post(f"{P}/purchases/{purchase['id']}/daily-question", headers=foreign).status_code == 404
@@ -112,6 +114,28 @@ def test_post_question_owner_and_date_protection(client, guest_headers, today):
         ).status_code
         == 409
     )
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_purchase_reflections_wait_until_review_due_day(client, guest_headers, today, local):
+    if local:
+        item = register(client, guest_headers).json()["items"][0]
+        purchase = client.put(
+            f"{P}/items/{item['id']}/decision", headers=guest_headers, json={"decision": "BUY"}
+        ).json()["purchase"]
+    else:
+        purchase = purchase_item(client, guest_headers, today)
+    bought = today.value
+    path = "local-question" if local else "daily-question"
+    url = f"{P}/purchases/{purchase['id']}/{path}"
+    assert purchase["review_due_on"] == (bought + timedelta(days=14)).isoformat()
+    for age in (0, 13):
+        today.value = bought + timedelta(days=age)
+        assert client.get(P + "/today", headers=guest_headers).json()["purchase_questions"] == []
+        assert client.post(url, headers=guest_headers, json={}).status_code == 409
+    today.value = bought + timedelta(days=14)
+    assert len(client.get(P + "/today", headers=guest_headers).json()["purchase_questions"]) == 1
+    assert client.post(url, headers=guest_headers, json={}).status_code == 200
 
 
 def test_historical_numeric_question_and_baseline_are_not_reinterpreted(
