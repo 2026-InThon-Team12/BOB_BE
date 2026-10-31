@@ -168,7 +168,7 @@ def test_cash_question_displays_the_registered_price(client, guest_headers, toda
     assert_swipe(q)
 
 
-def test_local_summary_counts_reflection_without_inventing_usage(client, guest_headers, today):
+def test_local_summary_counts_yes_as_forecast_days_in_original_window(client, guest_headers, today):
     item = register(client, guest_headers).json()["items"][0]
     sid, rows = item["simulation"]["id"], []
     for choice in ("YES", "UNSURE", "NO"):
@@ -196,8 +196,9 @@ def test_local_summary_counts_reflection_without_inventing_usage(client, guest_h
     r = response.json()["result"]
     assert r["reflection_counts"] == {"YES": 1, "UNSURE": 1, "NO": 1}
     assert r["purchase_support_rate"] == pytest.approx(1 / 3)
-    assert r["expected_used_days"] is None and r["expected_usage_rate"] is None
-    assert not r["comparison_eligible"] and r["metric_unit"] == "purchase_support"
+    assert r["expected_used_days"] == 1 and r["expected_usage_rate"] == pytest.approx(1 / 3)
+    assert r["comparison_eligible"] and r["metric_unit"] == "usage_days"
+    assert r["prediction_window_days"] == 3
     fetched = client.get(f"{P}/simulations/{sid}/result", headers=guest_headers).json()
     assert fetched["reflection_counts"] == r["reflection_counts"]
     rows[0]["answer"] = {"number_value": 3}
@@ -207,6 +208,16 @@ def test_local_summary_counts_reflection_without_inventing_usage(client, guest_h
         ).status_code
         == 422
     )
+    purchase = client.put(f"{P}/items/{item['id']}/decision", headers=guest_headers, json={"decision":"BUY"}).json()["purchase"]
+    assert purchase["expected_days_in_review_window"] == 1
+    assert purchase["prediction_window_days"] == 3
+    today.value += timedelta(days=14)
+    assert client.put(f"{P}/purchases/{purchase['id']}/review", headers=guest_headers, json={"frequency":"DAYS_4_7"}).status_code == 200
+    category = client.get(P + "/reports", headers=guest_headers).json()["categories"][0]
+    assert category["predicted_days"] == 1
+    assert category["prediction_window_days"] == 3
+    assert category["actual_days_estimate"] == 5.5
+    assert category["overprediction_ratio_estimate"] is None
 
 
 def test_adaptive_summary_does_not_require_a_numeric_forecast(client, guest_headers, today):
@@ -218,8 +229,10 @@ def test_adaptive_summary_does_not_require_a_numeric_forecast(client, guest_head
     today.value += timedelta(days=1)
     r = client.get(f"{P}/simulations/{item['simulation']['id']}/result", headers=guest_headers).json()
     assert r["reflection_counts"] == {"YES": 1, "UNSURE": 1, "NO": 1}
-    assert r["comparison_reason"] == "REFLECTION_NOT_USAGE"
-    assert r["expected_usage_rate"] is None
+    assert r["comparison_reason"] is None
+    assert r["expected_used_days"] == 1
+    assert r["prediction_window_days"] == 3
+    assert r["expected_usage_rate"] == pytest.approx(1 / 3)
 
 
 def test_purchase_during_generation_blocks_late_question(app, client, guest_headers, today):

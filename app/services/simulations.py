@@ -178,8 +178,12 @@ def purchase_view(session: Session, purchase: Purchase, today: date) -> dict:
         else:
             low = high = estimate = review.used_days
     actual_rate = estimate / window if estimate is not None else None
-    expected = result["expected_usage_rate"] * window if result["expected_usage_rate"] is not None else None
-    eligible = result["comparison_eligible"] and review is not None
+    swipe_forecast = result.get("prediction_method") == "swipe_yes_count"
+    forecast_window = result["prediction_window_days"] if swipe_forecast else window
+    expected = result["expected_used_days"] if swipe_forecast else (
+        result["expected_usage_rate"] * window if result["expected_usage_rate"] is not None else None
+    )
+    eligible = result["comparison_eligible"] and review is not None and forecast_window == window
     difference = round((result["expected_usage_rate"] - actual_rate) * 100, 2) if eligible else None
     ratio = round(expected / estimate, 2) if eligible and estimate else None
     verdict = None
@@ -222,6 +226,7 @@ def purchase_view(session: Session, purchase: Purchase, today: date) -> dict:
         "comparison_reason": result["comparison_reason"] if review else "REVIEW_REQUIRED",
         "review_options": REVIEW_OPTIONS if window == 14 else [],
         "expected_days_in_review_window": expected,
+        "prediction_window_days": forecast_window,
         "actual_days_estimate": estimate,
         "overprediction_ratio_estimate": ratio,
         "is_estimate": bool(review and review.frequency),

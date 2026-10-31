@@ -201,6 +201,7 @@ class PurchaseOutput(BaseModel):
     category: str = ""
     review_options: list[dict] = Field(default_factory=list)
     expected_days_in_review_window: float | None = None
+    prediction_window_days: int | None = None
     actual_days_estimate: float | None = None
     overprediction_ratio_estimate: float | None = None
     estimate_method: str = "range_midpoint"

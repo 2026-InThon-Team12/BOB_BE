@@ -578,30 +578,31 @@ def reflection_counts(answers):
 
 
 def apply_reflection_result(result, counts):
-    """Reflection is evidence for a decision, never inferred days of use."""
-    reason = result.get("comparison_reason")
-    if reason in (None, "FORECAST_REQUIRED"):
-        reason = "REFLECTION_NOT_USAGE"
-    result.update(
-        metric_unit="purchase_support",
-        reflection_counts=counts,
-        expected_used_days=None,
-        expected_usage_rate=None,
-        expected_cost_per_used_day=None,
-        prediction_window_days=None,
-        comparison_eligible=False,
-        comparison_reason=reason,
+    """Each YES forecasts one usage day within this item's observation period."""
+    duration = result["duration_days"]
+    total = sum(counts.values()) if counts is not None else 0
+    expected = counts["YES"] if counts is not None else None
+    reason = (
+        result.get("termination_reason")
+        or ("NO_OBSERVATION_PERIOD" if not duration else None)
+        or ("SIMULATION_NOT_COMPLETE" if result["status"] != "COMPLETED" else None)
+        or ("NO_RESPONSES" if not total else None)
     )
-    if counts is not None:
-        total = sum(counts.values())
-        result["purchase_support_rate"] = counts["YES"] / total if total else None
-        result["response_summary"] = (
-            f"구매 필요성을 돌아본 {total}개 응답 중 긍정 {counts['YES']}개, "
-            f"잘 모르겠어요 {counts['UNSURE']}개, 부정 {counts['NO']}개예요."
-        )
-    else:
-        result["purchase_support_rate"] = None
-        result["response_summary"] = (
-            "구매 필요성을 돌아본 답변은 기기에 보관돼요. 기간이 끝나면 함께 정리해요."
-        )
+    result.update(
+        metric_unit="usage_days",
+        prediction_method="swipe_yes_count",
+        reflection_counts=counts,
+        expected_used_days=expected,
+        expected_usage_rate=expected / duration if duration and expected is not None else None,
+        expected_cost_per_used_day=(result["price_snapshot"] + expected - 1) // expected if expected else None,
+        prediction_window_days=duration,
+        comparison_eligible=reason is None,
+        comparison_reason=reason,
+        purchase_support_rate=expected / total if total else None,
+    )
+    result["response_summary"] = (
+        f"관찰 {duration}일 중 ‘예’라고 답한 {expected}일을 예상 사용일수로 기록했어요."
+        if counts is not None
+        else "답변은 기기에 보관돼요. 기간이 끝나면 예상 사용일수를 집계해요."
+    )
     return result

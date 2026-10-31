@@ -96,6 +96,7 @@ class CategoryStatistic(BaseModel):
     metric_unit: str
     measurement_count: int
     observed_days: int
+    prediction_window_days: int
 
 
 class Discovery(CategoryStatistic):

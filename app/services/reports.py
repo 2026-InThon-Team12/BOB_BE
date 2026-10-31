@@ -100,6 +100,7 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
                 False,
                 len(entry["windows"]),
                 len(entry["windows"]) * 7,
+                len(entry["windows"]) * 7,
             )
         )
 
@@ -120,10 +121,11 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
                 view["is_estimate"],
                 1,
                 (purchase.review_end - purchase.review_start).days + 1,
+                view["prediction_window_days"],
             )
         )
     groups = {}
-    for category, predicted, actual, low, high, estimated, count, observed in measurements:
+    for category, predicted, actual, low, high, estimated, count, observed, forecast_window in measurements:
         group = groups.setdefault(
             category,
             {
@@ -136,6 +138,8 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
                 "is_estimate": False,
                 "measurement_count": 0,
                 "observed_days": 0,
+                "prediction_window_days": 0,
+                "matching_windows": True,
             },
         )
         group["sample_count"] += 1
@@ -149,15 +153,19 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
         group["is_estimate"] |= estimated
         group["measurement_count"] += count
         group["observed_days"] += observed
+        group["prediction_window_days"] += forecast_window
+        group["matching_windows"] &= forecast_window == observed
     for group in groups.values():
         actual = group["actual_days_estimate"]
         group["overprediction_ratio_estimate"] = (
             round(group["predicted_days"] / actual, 2)
-            if actual and group["predicted_days"] is not None else None
+            if actual and group["predicted_days"] is not None and group["matching_windows"] else None
         )
         group["status"] = (
             "PREDICTION_UNAVAILABLE"
             if group["predicted_days"] is None
+            else "DIFFERENT_OBSERVATION_WINDOWS"
+            if not group["matching_windows"]
             else "NO_ACTUAL_USE"
             if not actual
             else "OVERPREDICTED"
@@ -172,7 +180,7 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
 
 def calibration_for(category: str, statistics: list[dict]) -> dict | None:
     group = next((row for row in statistics if row["category"] == category), None)
-    if not group or group["predicted_days"] is None:
+    if not group or group["predicted_days"] is None or not group["matching_windows"]:
         return None
     ratio = group["overprediction_ratio_estimate"]
     if (ratio is None and group["predicted_days"] > 0) or (ratio is not None and ratio >= 2):
