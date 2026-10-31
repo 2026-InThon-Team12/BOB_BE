@@ -86,7 +86,7 @@ class ExpenseList(BaseModel):
 class CategoryStatistic(BaseModel):
     category: str
     sample_count: int
-    predicted_days: float
+    predicted_days: float | None
     actual_days_estimate: float
     actual_days_min: float
     actual_days_max: float

@@ -40,6 +40,15 @@ def test_one_time_usage_review(client, guest_headers, today, local, code, low, h
     review = response.json()["review"]
     assert (review["min_days"], review["max_days"], review["estimated_days"]) == (low, high, (low+high)/2)
     assert review["used_days"] is None
+    report = client.get(P + "/reports", headers=guest_headers).json()
+    assert len(report["categories"]) == 1
+    category = report["categories"][0]
+    assert (category["actual_days_min"], category["actual_days_max"]) == (low, high)
+    assert category["actual_days_estimate"] == (low + high) / 2
+    assert category["sample_count"] == 1
+    assert category["predicted_days"] is None
+    assert category["status"] == "PREDICTION_UNAVAILABLE"
+    assert report["discovery"] is None
     assert client.put(url, headers=guest_headers, json={"frequency": code}).json()["review"] == review
     other = "DAYS_1_3" if code != "DAYS_1_3" else "DAYS_11_14"
     assert client.put(url, headers=guest_headers, json={"frequency": other}).status_code == 409

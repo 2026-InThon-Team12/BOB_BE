@@ -73,6 +73,19 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
         window = question.context_snapshot["usage_window"]
         entry["windows"][(window["start"], window["end"])] = (predicted, actual)
 
+    rows = session.execute(
+        select(Purchase, PurchaseReview, Item)
+        .join(PurchaseReview, PurchaseReview.purchase_id == Purchase.id)
+        .join(Item, Item.id == Purchase.item_id)
+        .where(Purchase.guest_id == guest_id)
+    ).all()
+    # A new one-time review supersedes historical weekly answers for that purchase.
+    for purchase, review, item in rows:
+        if (review.frequency or "").startswith("DAYS_") and (
+            not month or review.submitted_on.strftime("%Y-%m") == month
+        ):
+            weekly.pop(purchase.id, None)
+
     measurements = []
     for entry in weekly.values():
         predicted = sum(value[0] for value in entry["windows"].values())
@@ -90,26 +103,17 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
             )
         )
 
-    rows = session.execute(
-        select(Purchase, PurchaseReview, Item)
-        .join(PurchaseReview, PurchaseReview.purchase_id == Purchase.id)
-        .join(Item, Item.id == Purchase.item_id)
-        .where(Purchase.guest_id == guest_id)
-    ).all()
     for purchase, review, item in rows:
-        # The new question stream takes precedence for a purchase in this report.
-        # Do not count the legacy 14-day review a second time.
+        # Avoid counting legacy weekly and legacy survey records twice.
         if purchase.id in weekly:
             continue
         if month and review.submitted_on.strftime("%Y-%m") != month:
             continue
         view = purchase_view(session, purchase, today)
-        if view["comparison_reason"] is not None:
-            continue
         measurements.append(
             (
                 item.category,
-                view["expected_days_in_review_window"],
+                view["expected_days_in_review_window"] if view["comparison_reason"] is None else None,
                 view["actual_days_estimate"],
                 view["review"]["min_days"],
                 view["review"]["max_days"],
@@ -135,7 +139,10 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
             },
         )
         group["sample_count"] += 1
-        group["predicted_days"] += predicted
+        if predicted is None:
+            group["predicted_days"] = None
+        elif group["predicted_days"] is not None:
+            group["predicted_days"] += predicted
         group["actual_days_estimate"] += actual
         group["actual_days_min"] += low
         group["actual_days_max"] += high
@@ -145,10 +152,13 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
     for group in groups.values():
         actual = group["actual_days_estimate"]
         group["overprediction_ratio_estimate"] = (
-            round(group["predicted_days"] / actual, 2) if actual else None
+            round(group["predicted_days"] / actual, 2)
+            if actual and group["predicted_days"] is not None else None
         )
         group["status"] = (
-            "NO_ACTUAL_USE"
+            "PREDICTION_UNAVAILABLE"
+            if group["predicted_days"] is None
+            else "NO_ACTUAL_USE"
             if not actual
             else "OVERPREDICTED"
             if group["predicted_days"] > actual * 1.25
@@ -162,7 +172,7 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
 
 def calibration_for(category: str, statistics: list[dict]) -> dict | None:
     group = next((row for row in statistics if row["category"] == category), None)
-    if not group:
+    if not group or group["predicted_days"] is None:
         return None
     ratio = group["overprediction_ratio_estimate"]
     if (ratio is None and group["predicted_days"] > 0) or (ratio is not None and ratio >= 2):
@@ -203,7 +213,7 @@ def monthly_report(session: Session, guest_id: str, month: str, today: date) -> 
     strongest = max(
         categories,
         key=lambda value: (
-            value["actual_days_estimate"] == 0 and value["predicted_days"] > 0,
+            value["actual_days_estimate"] == 0 and (value["predicted_days"] or 0) > 0,
             value["overprediction_ratio_estimate"] or 0,
         ),
         default=None,
