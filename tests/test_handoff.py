@@ -290,10 +290,13 @@ def test_summary_model_repair_timeout_and_fallback():
         assert summarize_local(request, result, config, Fake(outputs))["summary"] == "fallback"
 
 
-def test_vision_crop_is_product_region_and_ocr_never_guesses_image():
+def test_vision_receives_isolated_photos_and_preserves_server_prices():
+    from PIL import ImageDraw
     from test_cart_layout import cart_fixture, descriptions
 
     image, lines = cart_fixture()
+    ImageDraw.Draw(image).rectangle((140, 420, 340, 620), fill="red")
+    ImageDraw.Draw(image).rectangle((140, 1030, 340, 1230), fill="blue")
     data = io.BytesIO()
     image.save(data, format="PNG")
     table = "left\ttop\twidth\theight\tconfidence\ttext\n" + "\n".join(
@@ -302,37 +305,29 @@ def test_vision_crop_is_product_region_and_ocr_never_guesses_image():
     )
 
     class Fake:
+        calls = []
+
         def message(self, **kwargs):
-            if any(block["type"] == "image" for block in kwargs["content"]):
-                return json.dumps(
-                    {
-                        "items": [
-                            {
-                                "name": row["name"],
-                                "price": 999999,
-                                "category": "CLOTHING",
-                                "supplemental_question": "오늘 사용할 상황이 있었나요?",
-                                "thumbnail_box": [120, 180, 300, 240],
-                            }
-                            for row in descriptions()["items"]
-                        ]
-                    }
-                )
+            self.calls.append(kwargs)
             return json.dumps(descriptions())
 
     config = Settings(_env_file=None, lablup_vision_enabled=True)
-    ai = AiService(
-        config, client=Fake(), ocr=lambda *_: table, price_reader=lambda *_: ["27,500원", "20,500원"]
-    )
+    fake = Fake()
+    ai = AiService(config, client=fake, ocr=lambda *_: table, price_reader=lambda *_: ["27,500", "20,500"])
     result = ai.extract_cart(data.getvalue())
+    assert result.analysis_method == "vision"
     assert [item.price for item in result.items] == [27500, 20500]
-    crop = result.items[0].image_crop
-    with Image.open(io.BytesIO(base64.b64decode(crop["base64"]))) as thumbnail:
-        assert 0 < thumbnail.width <= 320 and 0 < thumbnail.height <= 320
-    assert result.items[1].image_crop is None  # Cross-card crop from the first product is rejected.
+    pictures = [b for b in fake.calls[0]["content"] if b["type"] == "image"]
+    assert len(pictures) == 2
+    for index, picture in enumerate(pictures):
+        with Image.open(io.BytesIO(base64.b64decode(picture["source"]["data"]))) as crop:
+            assert max(crop.size) <= 320
+            assert crop.getpixel((crop.width // 2, crop.height // 2))[index * 2] > 240
     config.lablup_vision_enabled = False
     result = ai.extract_cart(data.getvalue())
-    assert result.items[0].image_crop is None and "PRODUCT_IMAGE_UNAVAILABLE" in result.warnings
+    assert result.analysis_method == "ocr"
+    assert all(b["type"] == "text" for b in fake.calls[1]["content"])
+    assert all(item.image_crop for item in result.items)
 
 
 def test_shelf_displays_on_achievement_without_purchase_and_replays_once(

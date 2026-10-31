@@ -5,7 +5,7 @@ Unknown layouts require confirmation. Coordinates remain request-local.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from statistics import median
 
@@ -22,6 +22,7 @@ class CartCard:
     selected: bool | None = True
     box: tuple[int, int, int, int] | None = None
     price_evidence: Line | None = None
+    option_lines: list[str] = field(default_factory=list)
 
     def literal_title(self) -> str:
         """Keep evidence from this card when AI rewrites or borrows a name."""
@@ -239,5 +240,8 @@ def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | No
             key=lambda line: line.bottom - line.top,
             default=None,
         )
-        cards.append(CartCard(descriptions, price, control.selected, (left, start, right, end), evidence))
+        options = [line.text for line in region if normalized(line.text).startswith("옵션")]
+        cards.append(
+            CartCard(descriptions, price, control.selected, (left, start, right, end), evidence, options)
+        )
     return cards

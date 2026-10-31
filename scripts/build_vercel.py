@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -41,11 +42,19 @@ def main() -> None:
         image.save(buffer, format="PNG")
     result = subprocess.run(
         [sys.executable, "-m", "app.integrations.ocr_worker", str(target)],
-        input=buffer.getvalue(), capture_output=True, timeout=30, cwd=ROOT, check=True,
+        input=buffer.getvalue(),
+        capture_output=True,
+        timeout=30,
+        cwd=ROOT,
+        check=True,
     )
     if "12345" not in result.stdout.decode("utf-8"):
         raise RuntimeError("Bundled OCR smoke check failed")
     print("OCR build check passed (kor+eng).")
+    # Opt-in diagnostic runs where the server key already lives. Only a random
+    # digit image is sent; the probe prints safe booleans/codes, never credentials.
+    if os.environ.get("BOB_VERIFY_LABLUP") == "true":
+        subprocess.run([sys.executable, "-m", "scripts.check_lablup"], cwd=ROOT, timeout=90, check=True)
 
 
 if __name__ == "__main__":

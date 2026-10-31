@@ -63,6 +63,9 @@ def main() -> int:
             report["vision_verified"] = re.sub(r"\D", "", response) == code
             if not report["vision_verified"]:
                 report["error"] = "VISION_PROBE_NOT_VERIFIED_USE_OCR"
+                # This response concerns only a generated random digit image,
+                # never a customer screenshot. It helps diagnose false negatives.
+                report["synthetic_image_readback"] = response[:300]
         report["vision_setting_changed"] = False
         print(json.dumps(report))
         return 0 if args.text_only or report["vision_verified"] else 1

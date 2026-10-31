@@ -27,6 +27,7 @@ class LablupClient:
         system: str,
         content: list[dict[str, Any]],
         max_tokens: int = 4096,
+        thinking: bool | None = None,
     ) -> str:
         if not self.settings.lablup_api_key:
             raise LablupError("AI_NOT_CONFIGURED")
@@ -36,6 +37,8 @@ class LablupClient:
             "system": system,
             "messages": [{"role": "user", "content": content}],
         }
+        if thinking is not None:
+            payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
         headers = {
             "x-api-key": self.settings.lablup_api_key,
             "anthropic-version": "2023-06-01",
@@ -76,6 +79,8 @@ class LablupClient:
                 )
             except (ValueError, TypeError, AttributeError):
                 raise LablupError("AI_INVALID_RESPONSE") from None
+            if not result and body.get("stop_reason") == "max_tokens":
+                raise LablupError("AI_OUTPUT_LIMIT")
             if not result or len(result) > 100_000:
                 raise LablupError("AI_INVALID_RESPONSE")
             return result

@@ -103,6 +103,7 @@ def test_api_proposal_contains_only_selected_product_and_ignores_checkout_total(
                         {
                             "card_id": 0,
                             "name": "화이트 치아미백제",
+                            "display_name": "화이트 치아미백제",
                             "category": "BEAUTY",
                             "supplemental_question": "오늘 사용할 상황이 있었나요?",
                         }

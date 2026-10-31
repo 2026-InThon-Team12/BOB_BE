@@ -114,6 +114,7 @@ def descriptions():
             {
                 "card_id": i,
                 "name": name,
+                "display_name": name,
                 "category": "CLOTHING",
                 "supplemental_question": "오늘 입을 상황이 있었나요?",
             }
@@ -148,6 +149,36 @@ def test_model_order_cannot_move_price_between_cards():
     # Model receives independent card descriptions, with no price matching task.
     assert "27500" not in client.calls[0]["content"][0]["text"]
     assert "레드 스티치" not in client.calls[0]["content"][0]["text"]
+
+
+def test_concise_names_keep_source_identity_and_price():
+    response = descriptions()
+    response["items"][0]["display_name"] = "청바지"
+    response["items"][1]["display_name"] = "후드집업"
+    result = run_cart(Describer([response]))
+    assert [(i.name, i.price) for i in result.items] == [("청바지", 27500), ("후드집업", 20500)]
+
+
+def test_short_name_cannot_bypass_wrong_card_identity():
+    response = descriptions()
+    response["items"][0].update(name="데일리 후드 집업", display_name="남색 후드집업")
+    result = run_cart(Describer([response]))
+    assert result.items[0].name == "코튼 패드 청바지"
+    assert result.items[0].price == 27500
+
+
+def test_promotional_short_name_is_not_used():
+    response = descriptions()
+    response["items"][0]["display_name"] = "[한정판매!] 청바지"
+    result = run_cart(Describer([response]))
+    assert result.items[0].name == "코튼 패드 청바지"
+
+
+def test_color_from_another_card_is_not_added_without_photo_evidence():
+    response = descriptions()
+    response["items"][0]["display_name"] = "남색 청바지"
+    result = run_cart(Describer([response]))
+    assert result.items[0].name == "청바지"
 
 
 def test_no_selected_product_does_not_fall_back_to_extracting_all_or_call_ai():
@@ -189,13 +220,15 @@ def test_small_ocr_typo_repair_is_allowed_only_in_the_matching_card():
     assert not name_belongs_to_card("이름을 알 수 없는 새로운 상품", cards, 0)
 
 
-@pytest.mark.parametrize("error", ["missing_card", "duplicate_card", "invented_price"])
+@pytest.mark.parametrize("error", ["missing_card", "duplicate_card", "invented_price", "missing_short_name"])
 def test_invalid_card_identity_is_retried_then_rejected(error):
     response = descriptions()
     if error == "missing_card":
         response["items"].pop(0)
     elif error == "duplicate_card":
         response["items"][0]["card_id"] = 1
+    elif error == "missing_short_name":
+        response["items"][0].pop("display_name")
     else:
         response["items"][0]["price"] = 61770
     client = Describer([response, response])

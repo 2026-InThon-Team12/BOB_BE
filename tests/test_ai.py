@@ -125,6 +125,7 @@ def test_ocr_path_sends_only_text_and_preserves_unknown_price():
     assert result.items[0].price is None
     assert result.items[0].source == ItemSource.SCREENSHOT
     assert all(block["type"] == "text" for block in requests[0]["messages"][0]["content"])
+    assert requests[0]["thinking"] == {"type": "disabled"}
     assert "CONFIRM_EXTRACTED_ITEMS" in result.warnings
 
 
@@ -142,6 +143,9 @@ def test_rejected_vision_request_falls_back_to_ocr():
 
     ai = service(handler, lablup_vision_enabled=True)
     image, lines = cart_fixture()
+    from PIL import ImageDraw
+
+    ImageDraw.Draw(image).rectangle((140, 420, 340, 620), fill="red")
     table = "left\ttop\twidth\theight\tconfidence\ttext\n" + "\n".join(
         f"{line.left}\t{line.top}\t{line.right - line.left}\t{line.bottom - line.top}\t95\t{line.text}"
         for line in lines
