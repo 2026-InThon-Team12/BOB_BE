@@ -97,7 +97,7 @@ def cart_selectors(image: Image.Image) -> list[tuple[int, bool]]:
                 top = min(b for _, b in points)
                 bottom = max(b for _, b in points)
                 size = right - left + 1
-                if not (width * 0.025 <= size <= width * 0.065 and 0.8 <= size / (bottom - top + 1) <= 1.2):
+                if not (width * 0.025 <= size <= width * 0.10 and 0.8 <= size / (bottom - top + 1) <= 1.2):
                     continue
                 # A selector has four continuous sides; letters/icons do not.
                 inset = max(2, size // 5)
@@ -146,6 +146,52 @@ def _crossed_out(line: Line, image: Image.Image) -> bool:
         )
 
 
+def horizontal_separators(image: Image.Image) -> list[int]:
+    """Full-width grey dividers separate cart cards from checkout/sticky totals.
+
+    Preserve vertical resolution so one-pixel rules survive. Option boxes inside
+    a product card do not span the screen and therefore are not boundaries.
+    """
+    with image.convert("RGB").resize((100, image.height)) as narrow:
+        pixels = narrow.load()
+        boundaries = []
+        in_band = False
+        for y in range(narrow.height):
+            grey = (
+                sum(
+                    180 <= min(pixels[x, y]) < 253 and max(pixels[x, y]) - min(pixels[x, y]) < 12
+                    for x in range(100)
+                )
+                >= 95
+            )
+            if grey and not in_band:
+                boundaries.append(y)
+            in_band = grey
+        return boundaries
+
+
+def card_price_values(text: str) -> set[int]:
+    compact = re.sub(r"\s+", "", text)
+    # A price row can include a discount badge and delivery branding. Unit prices,
+    # coupon savings and order totals must not compete with the item selling price.
+    if re.search(r"쿠폰|배송비|적립|합계|총|주문|결제|할인됨|할인적용|개당|[gGlL]당", compact):
+        return set()
+    if re.search(r"\(\d+(?:개|g|kg|ml|l)", compact, re.IGNORECASE):
+        return set()
+    amounts = set()
+    for match in re.finditer(r"(?<![\d,])(\d{1,3}(?:,\d{3})+)(?:\s*(?:원|운|\d[!.ㅣ)]))?(?![\d,])", text):
+        amounts.add(int(match[1].replace(",", "")))
+    # Korean 원 may also become a lone digit after a clearly marked discount row.
+    discounted = re.fullmatch(r"\d{1,2}%([0-9]{1,3}(?:,[0-9]{3})+)\d", compact)
+    if discounted:
+        amounts.add(int(discounted[1].replace(",", "")))
+    if amounts:
+        return amounts
+    if re.fullmatch(r"(?:₩\s*)?\d[\d,]*\s*[^\d\s]{0,3}", text.strip()):
+        return money_values(text)
+    return set()
+
+
 def checkbox_cards(image: Image.Image, lines: list[Line]) -> list[CartCard]:
     selectors = cart_selectors(image)
     starts = [top for top, _ in selectors]
@@ -153,10 +199,14 @@ def checkbox_cards(image: Image.Image, lines: list[Line]) -> list[CartCard]:
         return []
     cards = []
     text_height = median([line.bottom - line.top for line in lines] or [20])
+    separators = horizontal_separators(image)
     for (start, selected), end in zip(selectors, starts[1:] + [image.height]):
         if end - start < 4 * text_height:
             continue
+        end = next((y for y in separators if start + 4 * text_height < y < end), end)
         region = [line for line in lines if start - text_height / 2 <= line.top < end - text_height / 2]
+        if any("전체선택" in normalized(line.text) and line.top < start + 2 * text_height for line in region):
+            continue
         footer = next(
             (
                 line.top
@@ -168,11 +218,9 @@ def checkbox_cards(image: Image.Image, lines: list[Line]) -> list[CartCard]:
         region = [line for line in region if line.top < footer]
         price_lines = []
         for line in region:
-            # Only a standalone amount, not a product title, quantity or order button.
-            text = line.text.strip()
-            if not re.fullmatch(r"(?:₩\s*)?\d[\d,]*\s*[^\d\s]{0,3}", text):
+            if line.top < start + text_height:
                 continue
-            values = money_values(text)
+            values = card_price_values(line.text)
             if len(values) == 1 and not _crossed_out(line, image):
                 price_lines.append((line, next(iter(values))))
         first_price = price_lines[0][0].top if price_lines else end
@@ -180,9 +228,11 @@ def checkbox_cards(image: Image.Image, lines: list[Line]) -> list[CartCard]:
         descriptions = [
             line
             for line in region
-            if line.top < min(first_price, start + image.width * 0.4)
-            and line.right > image.width * 0.45
-            and line.left > image.width * 0.20
+            if line.top < min(first_price, start + image.width * 0.22)
+            and line.right > image.width * 0.25
+            and line.left > image.width * 0.12
+            and not re.search(r"^(옵션|한달구매|같은판매자)|도착|주문", normalized(line.text))
+            and not card_price_values(line.text)
         ]
         if not descriptions:
             continue
