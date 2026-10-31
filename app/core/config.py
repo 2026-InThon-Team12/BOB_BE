@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     lablup_base_url: str = "https://api.console.lablup.ai/anthropic"
     lablup_model_id: str = "DeepSeek-V4.1-Flash-B300"
     lablup_vision_enabled: bool = False
+    cart_layout_vision_enabled: bool = False
+    cart_layout_timeout_seconds: float = Field(default=40, gt=0, le=60)
     ai_timeout_seconds: float = Field(default=30, gt=0, le=120)
     max_image_bytes: int = Field(default=10_485_760, gt=0, le=20_971_520)
     tesseract_cmd: str = "tesseract"
@@ -37,7 +39,7 @@ class Settings(BaseSettings):
         # Cloud providers supply a standard PostgreSQL URL; this project uses psycopg 3.
         for prefix in ("postgres://", "postgresql://"):
             if value.startswith(prefix):
-                return "postgresql+psycopg://" + value[len(prefix):]
+                return "postgresql+psycopg://" + value[len(prefix) :]
         return value
 
 

@@ -1,0 +1,227 @@
+{
+  "date": "2026-11-01",
+  "deployment": "https://bob-3imj3hqs7-mini-yujin.vercel.app",
+  "core_passes": 9,
+  "runs": 10,
+  "name_hint_passes": 7,
+  "naming_timeouts_with_preserved_items": 2,
+  "baseline": [
+    {
+      "selection": false,
+      "prices": false,
+      "names": false,
+      "photos": false,
+      "pass": false,
+      "strategy": null,
+      "warnings": [
+        "SELECTION_UNVERIFIED",
+        "RECAPTURE_OR_ENTER_MANUALLY"
+      ],
+      "review_count": 0,
+      "case": "staggered-columns",
+      "run": 1,
+      "seconds": 1.48
+    }
+  ],
+  "results": [
+    {
+      "selection": true,
+      "prices": true,
+      "names": true,
+      "photos": true,
+      "pass": true,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.939
+      ],
+      "verification_notes": [],
+      "case": "coupang",
+      "run": 1,
+      "seconds": 12.5
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": false,
+      "photos": true,
+      "pass": false,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "AI_TIMEOUT",
+        "REVIEW_OCR_NAMES",
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.943,
+        0.904
+      ],
+      "verification_notes": [],
+      "case": "ably",
+      "run": 1,
+      "seconds": 37.11
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": false,
+      "photos": true,
+      "pass": false,
+      "strategy": "spatial_ai",
+      "warnings": [
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.957
+      ],
+      "verification_notes": [],
+      "case": "staggered-columns",
+      "run": 1,
+      "seconds": 9.88
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": true,
+      "photos": true,
+      "pass": true,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "AI_TIMEOUT",
+        "REVIEW_OCR_NAMES",
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.939
+      ],
+      "verification_notes": [],
+      "case": "coupang",
+      "run": 2,
+      "seconds": 36.67
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": true,
+      "photos": true,
+      "pass": true,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.943,
+        0.904
+      ],
+      "verification_notes": [],
+      "case": "ably",
+      "run": 2,
+      "seconds": 10.08
+    },
+    {
+      "selection": false,
+      "prices": false,
+      "names": false,
+      "photos": false,
+      "pass": false,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "SPATIAL_LAYOUT_UNAVAILABLE_USING_OCR",
+        "AI_TIMEOUT",
+        "SELECTION_UNVERIFIED",
+        "RECAPTURE_OR_ENTER_MANUALLY"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [],
+      "verification_notes": [],
+      "case": "staggered-columns",
+      "run": 2,
+      "seconds": 43.94
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": true,
+      "photos": true,
+      "pass": true,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.925,
+        0.589
+      ],
+      "verification_notes": [],
+      "case": "naver",
+      "run": 1,
+      "seconds": 13.58
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": true,
+      "photos": true,
+      "pass": true,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.839
+      ],
+      "verification_notes": [],
+      "case": "stroller",
+      "run": 1,
+      "seconds": 14.0
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": true,
+      "photos": true,
+      "pass": true,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.925,
+        0.589
+      ],
+      "verification_notes": [],
+      "case": "naver",
+      "run": 2,
+      "seconds": 10.66
+    },
+    {
+      "selection": true,
+      "prices": true,
+      "names": true,
+      "photos": true,
+      "pass": true,
+      "strategy": "spatial_ocr",
+      "warnings": [
+        "CONFIRM_EXTRACTED_ITEMS"
+      ],
+      "review_count": 0,
+      "photo_overlaps": [
+        0.839
+      ],
+      "verification_notes": [],
+      "case": "stroller",
+      "run": 2,
+      "seconds": 9.81
+    }
+  ]
+}

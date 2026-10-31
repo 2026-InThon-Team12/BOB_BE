@@ -121,9 +121,8 @@ def _candidate_selectors(image: Image.Image, *, pale: bool = False) -> list[Sele
     return boxes
 
 
-def selectors(
-    image: Image.Image, lines: list[Line] | None = None, *, word_level: bool = False
-) -> list[Selector]:
+def selector_candidates(image: Image.Image) -> list[Selector]:
+    """Return local pixel evidence without assuming columns or repeated rows."""
     boxes = _candidate_selectors(image)
     # A permissive luminance pass also picks up badges and background fragments.
     # Admit ONLY empty outlines from it, keeping existing high-contrast controls.
@@ -151,6 +150,13 @@ def selectors(
             for b in boxes
         )
     ]
+    return boxes
+
+
+def selectors(
+    image: Image.Image, lines: list[Line] | None = None, *, word_level: bool = False
+) -> list[Selector]:
+    boxes = selector_candidates(image)
     if lines is not None:
         # Reject glyphs embedded in OCR text, and icons without nearby product text.
         boxes = [

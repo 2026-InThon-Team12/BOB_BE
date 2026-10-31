@@ -1,6 +1,7 @@
 """Small, bounded Anthropic Messages client for Lablup's gateway only."""
 
 from typing import Any
+import time
 
 import httpx
 
@@ -20,6 +21,7 @@ class LablupClient:
     def __init__(self, settings: Settings, client: httpx.Client | None = None):
         self.settings = settings
         self._client = client
+        self.deadline: float | None = None
 
     def message(
         self,
@@ -28,6 +30,7 @@ class LablupClient:
         content: list[dict[str, Any]],
         max_tokens: int = 4096,
         thinking: bool | None = None,
+        timeout_seconds: float | None = None,
     ) -> str:
         if not self.settings.lablup_api_key:
             raise LablupError("AI_NOT_CONFIGURED")
@@ -49,11 +52,19 @@ class LablupClient:
         own_client = self._client is None
         client = self._client or httpx.Client(follow_redirects=False)
         try:
+            timeout = (
+                min(timeout_seconds, 120) if timeout_seconds is not None else self.settings.ai_timeout_seconds
+            )
+            if self.deadline is not None:
+                remaining = self.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LablupError("AI_TIMEOUT")
+                timeout = min(timeout, remaining)
             response = client.post(
                 endpoint,
                 headers=headers,
                 json=payload,
-                timeout=self.settings.ai_timeout_seconds,
+                timeout=timeout,
                 follow_redirects=False,
             )
             if response.status_code in (401, 403):

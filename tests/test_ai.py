@@ -16,6 +16,18 @@ def settings(**overrides):
     return Settings(_env_file=None, lablup_api_key="test-secret-not-for-output", **overrides)
 
 
+def test_expired_cart_budget_does_not_start_another_model_request(monkeypatch):
+    calls = []
+    client = LablupClient(
+        settings(), client=httpx.Client(transport=httpx.MockTransport(lambda r: calls.append(r)))
+    )
+    monkeypatch.setattr("app.integrations.lablup.time.monotonic", lambda: 100)
+    client.deadline = 99
+    with pytest.raises(LablupError, match="AI_TIMEOUT"):
+        client.message(system="test", content=[], timeout_seconds=40)
+    assert not calls
+
+
 def png_bytes():
     with Image.new("RGB", (100, 100), "white") as image:
         output = io.BytesIO()

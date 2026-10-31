@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import warnings
 from collections.abc import Callable
 from typing import Annotated, Literal
@@ -20,6 +21,7 @@ from app.services.cart_layout import CartCard, checkbox_cards, name_belongs_to_c
 from app.services.cart_thumbnails import encode_thumbnail, thumbnail_box
 from app.services.ocr_layout import visual_lines, word_boxes
 from app.services.price_evidence import read_price_crops, verify_prices
+from app.services.cart_spatial import propose_layout, verify_layout, recover_with_ocr_layout
 
 
 PositivePrice = Annotated[int, Field(strict=True, gt=0, le=1_000_000_000_000)]
@@ -36,6 +38,9 @@ class ItemDraft(BaseModel):
     image_url: str | None = None
     image_crop: dict | None = None
     category_source: Literal["AI", "FALLBACK"] = "AI"
+    review_fields: list[str] = Field(default_factory=list)
+    verification_notes: list[str] = Field(default_factory=list)
+    source_regions: dict[str, list[int]] | None = None
 
     @computed_field
     @property
@@ -50,6 +55,8 @@ class DraftAnalysis(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     analysis_method: Literal["text", "vision", "ocr", "manual"]
     selection_summary: dict[str, int] | None = None
+    review_items: list[ItemDraft] = Field(default_factory=list, max_length=30)
+    extraction_strategy: Literal["spatial_ai", "spatial_ocr"] | None = None
 
 
 class _ProposedItem(BaseModel):
@@ -408,18 +415,171 @@ class AiService:
                 )
         raise LablupError("AI_INVALID_OUTPUT")
 
+    def _extract_spatial(self, image: Image.Image, text: str) -> DraftAnalysis:
+        words = word_boxes(text)
+        proposal, controls = propose_layout(
+            image, words, self.client, self.settings.cart_layout_timeout_seconds
+        )
+        if not proposal.items:
+            raise LablupError("CART_LAYOUT_EMPTY")
+        rows = verify_layout(image, words, proposal, controls, self.settings, self.price_reader)
+        recover_with_ocr_layout(image, words, rows, self.settings, self.price_reader, controls)
+        items, reviews = [], []
+        notices = ["CONFIRM_EXTRACTED_ITEMS"]
+        for row in rows:
+            if row.selected is False:
+                continue
+            category = Category.OTHER if "name" in row.review_fields else row.proposal.category
+            item = ItemDraft(
+                name=row.name,
+                price=row.card.price,
+                category=category,
+                supplemental_question=default_question(category, row.name),
+                source=ItemSource.SCREENSHOT,
+                image_crop=row.crop,
+                review_fields=row.review_fields,
+                verification_notes=row.verification_notes,
+                source_regions={
+                    key: [box.x1, box.y1, box.x2, box.y2]
+                    for key, box in {
+                        "row": row.proposal.row,
+                        "title": row.proposal.title_box,
+                        "price": row.proposal.price_box,
+                        "photo": row.proposal.photo_box,
+                    }.items()
+                    if box is not None
+                },
+                category_source="FALLBACK" if "name" in row.review_fields else "AI",
+            )
+            (items if row.selected is True else reviews).append(item)
+        summary = {
+            "visible": len(rows),
+            "selected": len(items),
+            "excluded": sum(row.selected is False for row in rows),
+            "unknown": len(reviews),
+        }
+        if len(items) > 20:
+            return DraftAnalysis(
+                items=[],
+                warnings=["TOO_MANY_SELECTED_ITEMS"],
+                analysis_method="manual",
+                selection_summary=summary,
+                extraction_strategy="spatial_ai",
+            )
+        if reviews:
+            notices.append("PARTIAL_SELECTION_UNVERIFIED")
+        if not items and not reviews:
+            notices.append("NO_SELECTED_ITEMS")
+        for field, notice in [
+            ("price", "REVIEW_PRICES_MANUALLY"),
+            ("name", "REVIEW_OCR_NAMES"),
+            ("photo", "PRODUCT_IMAGE_UNAVAILABLE"),
+        ]:
+            if any(field in item.review_fields for item in items + reviews):
+                notices.append(notice)
+        return DraftAnalysis(
+            items=items,
+            review_items=reviews,
+            warnings=notices,
+            analysis_method="vision",
+            selection_summary=summary,
+            extraction_strategy="spatial_ai",
+        )
+
+    def _complete_ocr_cart(self, image, text):
+        """Prefer stable, fully verified local evidence over new model coordinates."""
+        words = word_boxes(text)
+        detected = checkbox_cards(image, visual_lines(text), words)
+        if not detected or any(c.selected is None for c in detected):
+            return None
+        cards = [c for c in detected if c.selected]
+        if len(cards) > 20 or any(len(c.literal_title().strip()) < 2 for c in cards):
+            return None
+        verify_prices(image, cards, self.settings, self.price_reader)
+        if any(c.price is None for c in cards):
+            return None
+        boxes = [thumbnail_box(image, c, words) for c in cards]
+        if any(box is None for box in boxes):
+            return None
+        crops = [encode_thumbnail(image, box) for box in boxes]
+        return (
+            cards,
+            crops,
+            {"visible": len(detected), "selected": len(cards), "excluded": len(detected) - len(cards)},
+        )
+
+    def _finish_ocr_cart(self, image, cards, crops, summary, notices):
+        if not cards:
+            result = self._cart_result([], "ocr", notices + ["NO_SELECTED_ITEMS"])
+            result.selection_summary = summary
+            result.extraction_strategy = "spatial_ocr"
+            return result
+        method = "ocr"
+        try:
+            use_photos = self.settings.lablup_vision_enabled and any(crops)
+            try:
+                proposed, fallback_names = self._describe_cards(cards, crops if use_photos else None)
+                if use_photos:
+                    method = "vision"
+            except LablupError as exc:
+                if not exc.image_unsupported:
+                    raise
+                notices.append("VISION_UNAVAILABLE_USING_OCR")
+                proposed, fallback_names = self._describe_cards(cards)
+        except LablupError as exc:
+            # Naming is optional enrichment. An unavailable model must not
+            # discard independently verified selections, prices or photos.
+            notices.extend([exc.code, "REVIEW_OCR_NAMES"])
+            proposed = [
+                _ProposedItem(
+                    name=c.literal_title(),
+                    price=c.price,
+                    category=Category.OTHER,
+                    supplemental_question=default_question(Category.OTHER, c.literal_title()),
+                )
+                for c in cards
+            ]
+            fallback_names = {p.name for p in proposed}
+        if fallback_names and "REVIEW_OCR_NAMES" not in notices:
+            notices.append("REVIEW_OCR_NAMES")
+        result = self._cart_result(proposed, method, notices, image if method == "vision" else None)
+        for item, crop in zip(result.items, crops):
+            item.image_crop = crop
+            if item.name in fallback_names:
+                item.category_source = "FALLBACK"
+                item.review_fields.append("name")
+        if all(item.image_crop is not None for item in result.items):
+            result.warnings = [w for w in result.warnings if w != "PRODUCT_IMAGE_UNAVAILABLE"]
+        result.selection_summary = summary
+        result.extraction_strategy = "spatial_ocr"
+        return result
+
     def extract_cart(self, data: bytes) -> DraftAnalysis:
         _, image = validate_image(data, self.settings.max_image_bytes)
         notices = []
+        previous_deadline = self.client.deadline if isinstance(self.client, LablupClient) else None
+        if isinstance(self.client, LablupClient):
+            self.client.deadline = time.monotonic() + 80
         try:
             text = self.ocr(image, self.settings)
+            if self.settings.cart_layout_vision_enabled and self.settings.lablup_vision_enabled:
+                complete = self._complete_ocr_cart(image, text)
+                if complete is not None:
+                    cards, crops, summary = complete
+                    return self._finish_ocr_cart(image, cards, crops, summary, notices)
+                try:
+                    return self._extract_spatial(image, text)
+                except LablupError as exc:
+                    notices.append("SPATIAL_LAYOUT_UNAVAILABLE_USING_OCR")
+                    notices.append(exc.code)
             lines = visual_lines(text)
             detected = checkbox_cards(image, lines, word_boxes(text))
             if not detected or any(card.selected is None for card in detected):
                 return DraftAnalysis(
                     items=[],
-                    warnings=["SELECTION_UNVERIFIED", "RECAPTURE_OR_ENTER_MANUALLY"],
+                    warnings=notices + ["SELECTION_UNVERIFIED", "RECAPTURE_OR_ENTER_MANUALLY"],
                     analysis_method="manual",
+                    extraction_strategy="spatial_ocr",
                 )
             cards = [card for card in detected if card.selected is True]
             summary = {
@@ -446,31 +606,7 @@ class AiService:
             for card in cards:
                 box = thumbnail_box(image, card, word_boxes(text))
                 crops.append(encode_thumbnail(image, box) if box else None)
-            method = "ocr"
-            try:
-                use_photos = self.settings.lablup_vision_enabled and any(crops)
-                proposed, fallback_names = self._describe_cards(cards, crops if use_photos else None)
-                if use_photos:
-                    method = "vision"
-            except LablupError as exc:
-                if not exc.image_unsupported:
-                    raise
-                notices.append("VISION_UNAVAILABLE_USING_OCR")
-                proposed, fallback_names = self._describe_cards(cards)
-            if fallback_names:
-                notices.append("REVIEW_OCR_NAMES")
-            result = self._cart_result(proposed, method, notices, image if method == "vision" else None)
-            for item, crop in zip(result.items, crops):
-                item.image_crop = crop
-            if all(item.image_crop is not None for item in result.items):
-                result.warnings = [
-                    warning for warning in result.warnings if warning != "PRODUCT_IMAGE_UNAVAILABLE"
-                ]
-            result.selection_summary = summary
-            for item in result.items:
-                if item.name in fallback_names:
-                    item.category_source = "FALLBACK"
-            return result
+            return self._finish_ocr_cart(image, cards, crops, summary, notices)
         except (LablupError, OcrError) as exc:
             code = exc.code if isinstance(exc, LablupError) else str(exc)
             return DraftAnalysis(
@@ -478,6 +614,8 @@ class AiService:
             )
         finally:
             image.close()
+            if isinstance(self.client, LablupClient):
+                self.client.deadline = previous_deadline
 
     @staticmethod
     def _cart_result(

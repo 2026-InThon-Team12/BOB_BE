@@ -26,6 +26,8 @@ class CartCard:
 
     def literal_title(self) -> str:
         """Keep evidence from this card when AI rewrites or borrows a name."""
+        if not self.lines:
+            return ""
         candidates = [
             line
             for line in self.lines

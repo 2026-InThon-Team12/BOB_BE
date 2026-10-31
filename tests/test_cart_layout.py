@@ -221,7 +221,7 @@ def test_small_ocr_typo_repair_is_allowed_only_in_the_matching_card():
 
 
 @pytest.mark.parametrize("error", ["missing_card", "duplicate_card", "invented_price", "missing_short_name"])
-def test_invalid_card_identity_is_retried_then_rejected(error):
+def test_invalid_card_identity_is_retried_then_verified_ocr_fields_are_preserved(error):
     response = descriptions()
     if error == "missing_card":
         response["items"].pop(0)
@@ -234,5 +234,11 @@ def test_invalid_card_identity_is_retried_then_rejected(error):
     client = Describer([response, response])
     result = run_cart(client)
     assert len(client.calls) == 2
-    assert result.items == []
+    assert [(item.name, item.price) for item in result.items] == [
+        ("코튼 패드 청바지", 27500),
+        ("데일리 후드 집업", 20500),
+    ]
+    assert all(item.category_source == "FALLBACK" and item.review_fields == ["name"] for item in result.items)
+    assert result.selection_summary["excluded"] == 1
     assert "AI_INVALID_OUTPUT" in result.warnings
+    assert "REVIEW_OCR_NAMES" in result.warnings
