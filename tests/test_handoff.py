@@ -20,7 +20,7 @@ from app.models import (
 from app.services.ai import AiService
 from app.services.cart_discounts import CartDiscountRequest, calculate_cart
 from app.services.local_questions import LocalSummaryRequest, summarize_local
-from tests.test_finance import _goal, _impulse, _decide
+from tests.test_finance import _accrue, _goal, _impulse, _decide
 
 P = "/api/v1"
 
@@ -344,9 +344,10 @@ def test_shelf_displays_on_achievement_without_purchase_and_replays_once(
     impulse = _impulse(client, guest_headers, amount=10000)
     assert _decide(client, guest_headers, impulse, "RESISTED").status_code == 200
     assert _decide(client, guest_headers, impulse, "RESISTED").status_code == 200
+    _accrue(client, guest_headers, today, 10000)
     shelf = client.get(P + "/goals/shelf", headers=guest_headers).json()
     assert shelf["count"] == 1 and shelf["total_target_amount"] == 10000
-    assert shelf["items"][0]["achieved_on"] == today.value.isoformat()
+    assert shelf["items"][0]["achieved_on"] == (today.value - timedelta(days=1)).isoformat()
     assert "total_purchase_amount" not in shelf and "review" not in shelf["items"][0]
     assert shelf["items"][0]["resisted_count"] == 1
     assert client.get(P + "/goals/current", headers=guest_headers).json()["shelf_count"] == 1

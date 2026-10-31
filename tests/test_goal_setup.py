@@ -2,12 +2,12 @@ from sqlalchemy import func, select
 
 from app.models import Goal, SavingEvent
 from tests.test_core import create_item
-from tests.test_finance import _goal, _impulse, _decide
+from tests.test_finance import _accrue, _goal, _impulse, _decide
 
 P = "/api/v1"
 
 
-def test_first_setup_candidates_and_preview_are_owner_scoped_read_only(client, guest_headers, session):
+def test_first_setup_candidates_and_preview_are_owner_scoped_read_only(client, guest_headers, session, today):
     create_item(client, guest_headers)
     setup = client.get(P + "/goals/setup", headers=guest_headers).json()
     assert setup["mode"] == "FIRST" and setup["current_goal"] is None
@@ -24,10 +24,11 @@ def test_first_setup_candidates_and_preview_are_owner_scoped_read_only(client, g
     assert client.get(P + "/goals/setup", headers=h).json()["candidates"] == []
 
 
-def test_change_preview_matches_on_off_cap_and_does_not_touch_ledger(client, guest_headers, session):
+def test_change_preview_matches_on_off_cap_and_does_not_touch_ledger(client, guest_headers, session, today):
     goal = _goal(client, guest_headers, target=240000)
     impulse = _impulse(client, guest_headers, amount=151000)
     _decide(client, guest_headers, impulse, "RESISTED")
+    _accrue(client, guest_headers, today, 151000)
     assert client.get(P + "/goals/setup", headers=guest_headers).json()["mode"] == "CHANGE"
     body = {"mode": "CHANGE", "current_goal_id": goal["id"], "name": "새 목표", "target_amount": 200000}
     response = client.post(P + "/goals/preview", headers=guest_headers, json=body)
@@ -48,12 +49,13 @@ def test_change_preview_matches_on_off_cap_and_does_not_touch_ledger(client, gue
     assert client.post(P + "/goals/preview", headers=guest_headers, json=body).status_code == 409
 
 
-def test_next_preview_requires_achievement_and_does_not_reuse_achieved_money(client, guest_headers):
+def test_next_preview_requires_achievement_and_does_not_reuse_achieved_money(client, guest_headers, today):
     goal = _goal(client, guest_headers, target=10000)
     body = {"mode": "NEXT", "current_goal_id": goal["id"], "name": "다음 목표", "target_amount": 10000}
     assert client.post(P + "/goals/preview", headers=guest_headers, json=body).status_code == 409
     impulse = _impulse(client, guest_headers, amount=15000)
     _decide(client, guest_headers, impulse, "RESISTED")
+    _accrue(client, guest_headers, today, 10000)
     assert client.get(P + "/goals/setup", headers=guest_headers).json()["mode"] == "NEXT"
     assert (
         client.post(P + "/goals/preview", headers=guest_headers, json=body).json()["starting_saved_amount"]

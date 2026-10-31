@@ -16,6 +16,7 @@ from app.core.auth import get_guest
 from app.core.clock import get_today
 from app.core.errors import AppError
 from app.db import get_session
+from app.services import goal_funding
 from app.models import Budget, Expense, Goal, Guest, Impulse, SavingEvent
 from app.services.finance import (
     active_goal,
@@ -25,7 +26,7 @@ from app.services.finance import (
     month_days,
     request_hash,
     attach_unallocated_savings,
-    safe_eta,
+    wallet_summary,
     record_goal_achievement,
 )
 
@@ -120,6 +121,8 @@ class GoalOutput(BaseModel):
     currently_funded: bool = False
     source_url: str | None = None
     can_shop: bool = False
+    funding_method: str = "CALENDAR_BUDGET"
+    uses_previous_budget: bool = False
     shelf_count: int = 0
     shelf_url: str = "/api/v1/goals/shelf"
 
@@ -134,6 +137,8 @@ class ImpulseDecision(InputModel):
 
 
 class ImpulseOutput(BaseModel):
+    hourly_rate: int = goal_funding.HOURLY_RATE
+    work_minutes: int = 0
     id: str
     name: str
     amount: int
@@ -156,7 +161,7 @@ def _month_days(month: str) -> int:
         raise AppError(422, "INVALID_MONTH", "월은 유효한 YYYY-MM 형식이어야 해요.") from exc
 
 
-def _budget_output(budget: Budget) -> dict:
+def _budget_output(budget: Budget, session: Session, today: date) -> dict:
     days = _month_days(budget.month)
     available = budget.income - budget.food - budget.living - budget.transport - budget.savings
     return {
@@ -169,7 +174,9 @@ def _budget_output(budget: Budget) -> dict:
         "hourly_wage": budget.hourly_wage,
         "month_days": days,
         "monthly_available_amount": available,
-        "daily_saving_possible_amount": round(budget.savings / days, 2) if budget.savings > 0 else None,
+        "daily_saving_possible_amount": wallet_summary(session, budget.guest_id, budget.month, today)[
+            "daily_savings"
+        ],
         "is_estimate": True,
     }
 
@@ -187,6 +194,8 @@ def _impulse_output(impulse: Impulse) -> dict:
         "id": impulse.id,
         "name": impulse.name,
         "amount": impulse.amount,
+        "hourly_rate": goal_funding.HOURLY_RATE,
+        "work_minutes": (impulse.amount * 60 + goal_funding.HOURLY_RATE - 1) // goal_funding.HOURLY_RATE,
         "goal_id": impulse.goal_id,
         "decision": impulse.decision,
         "budget_month": impulse.budget_month,
@@ -203,6 +212,7 @@ def _impulse_output(impulse: Impulse) -> dict:
 @router.get("/budgets/{month}", response_model=BudgetOutput)
 def get_budget(
     month: Month,
+    today: date = Depends(get_today),
     guest: Guest = Depends(get_guest),
     session: Session = Depends(get_session),
 ) -> dict:
@@ -210,13 +220,14 @@ def get_budget(
     budget = session.scalar(select(Budget).where(Budget.guest_id == guest.id, Budget.month == month))
     if budget is None:
         raise AppError(404, "BUDGET_NOT_FOUND", "해당 월의 예산이 없어요.")
-    return _budget_output(budget)
+    return _budget_output(budget, session, today)
 
 
 @router.put("/budgets/{month}", response_model=BudgetOutput)
 def put_budget(
     month: Month,
     body: BudgetInput,
+    today: date = Depends(get_today),
     guest: Guest = Depends(get_guest),
     session: Session = Depends(get_session),
 ) -> dict:
@@ -230,7 +241,7 @@ def put_budget(
         for field, value in body.model_dump().items():
             setattr(budget, field, value)
     session.commit()
-    return _budget_output(budget)
+    return _budget_output(budget, session, today)
 
 
 @router.post("/goals", response_model=GoalOutput, status_code=201)
@@ -243,7 +254,12 @@ def create_goal(
     lock_guest(session, guest.id)
     if active_goal(session, guest.id) is not None:
         raise AppError(409, "ACTIVE_GOAL_EXISTS", "진행 중인 목표는 하나만 설정할 수 있어요.")
-    goal = Goal(guest_id=guest.id, **body.model_dump(), active=True)
+    goal = Goal(
+        guest_id=guest.id,
+        **body.model_dump(),
+        active=True,
+        funding=goal_funding.opening(session, guest.id, today),
+    )
     session.add(goal)
     session.flush()
     attach_unallocated_savings(session, goal)
@@ -262,9 +278,12 @@ def get_current_goal(
     session: Session = Depends(get_session),
     today: date = Depends(get_today),
 ) -> dict:
+    lock_guest(session, guest.id)
     goal = active_goal(session, guest.id)
     if goal is None:
         raise AppError(404, "GOAL_NOT_FOUND", "진행 중인 목표가 없어요.")
+    record_goal_achievement(session, goal, today)
+    session.commit()
     return goal_summary(session, goal, today)
 
 
@@ -279,6 +298,7 @@ def patch_current_goal(
     goal = active_goal(session, guest.id)
     if goal is None:
         raise AppError(404, "GOAL_NOT_FOUND", "진행 중인 목표가 없어요.")
+    record_goal_achievement(session, goal, today)
     if goal.achieved_on and body.model_fields_set & {"name", "target_amount"}:
         raise AppError(
             409, "GOAL_ALREADY_ACHIEVED", "달성한 목표의 이름과 금액은 유지하고 다음 목표를 정해 주세요."
@@ -321,7 +341,13 @@ def create_impulse(
         if budget
         else {}
     )
-    comparison = compare_spending(body.amount, month, **components)
+    comparison = compare_spending(
+        body.amount,
+        month,
+        **components,
+        today=today,
+        spent=wallet_summary(session, guest.id, month, today)["spent_amount"],
+    )
     impulse = Impulse(
         guest_id=guest.id,
         goal_id=goal.id if goal else None,
@@ -338,9 +364,11 @@ def create_impulse(
     if goal:
         summary = goal_summary(session, goal, today)
         impulse.if_resisted_on = summary["estimated_completion_on"]
-        impulse.if_purchased_on = (
-            safe_eta(today, summary["remaining_days"] + impulse.delay_days)
-            if summary["remaining_days"] is not None and impulse.delay_days is not None
+        after = goal_funding.plan(session, goal, today, body.amount) if goal.funding else None
+        impulse.if_purchased_on = after["eta"] if after else None
+        impulse.delay_days = (
+            max(0, (impulse.if_purchased_on - impulse.if_resisted_on).days)
+            if impulse.if_purchased_on and impulse.if_resisted_on
             else None
         )
     session.add(impulse)
@@ -430,7 +458,17 @@ def next_goal(
     record_goal_achievement(session, previous, today)
     previous.completed_on = previous.completed_on or today
     session.flush()
-    goal = Goal(guest_id=guest.id, **body.model_dump())
+    previous_plan = goal_funding.plan(session, previous, today) if previous.funding else None
+    reserved = (
+        previous_plan["month_allocated"]
+        if previous_plan and previous_plan["allocation_month"] == today.strftime("%Y-%m")
+        else 0
+    )
+    goal = Goal(
+        guest_id=guest.id,
+        **body.model_dump(),
+        funding=goal_funding.opening(session, guest.id, today, reserved=reserved),
+    )
     session.add(goal)
     session.flush()
     attach_unallocated_savings(session, goal)

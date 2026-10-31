@@ -15,6 +15,7 @@ from app.schemas import RequestModel, Money, Name, TodayOutput, ItemOutput
 from app.api.finance import GoalOutput, BudgetInput
 from app.services.finance import (
     active_goal,
+    record_goal_achievement,
     goal_summary,
     lock_guest,
     month_days,
@@ -141,7 +142,10 @@ def checked_month(month: str | None, today: date) -> str:
 
 @router.get("/home", response_model=HomeOutput)
 def home(session: DB, guest: Owner, today: Today) -> dict:
+    lock_guest(session, guest.id)
     goal = active_goal(session, guest.id)
+    record_goal_achievement(session, goal, today)
+    session.commit()
     items = list(
         session.scalars(
             select(Item)
@@ -153,7 +157,7 @@ def home(session: DB, guest: Owner, today: Today) -> dict:
     return {
         "today": get_today_cards(session, guest.id, today),
         "goal": goal_summary(session, goal, today) if goal else None,
-        "wallet": wallet_summary(session, guest.id, today.strftime("%Y-%m")),
+        "wallet": wallet_summary(session, guest.id, today.strftime("%Y-%m"), today),
         "simulations": [item_view(session, item, today) for item in items],
     }
 
@@ -163,7 +167,7 @@ def wallet(session: DB, guest: Owner, today: Today, month: str | None = None) ->
     month = checked_month(month, today)
     budget = session.scalar(select(Budget).where(Budget.guest_id == guest.id, Budget.month == month))
     return {
-        **wallet_summary(session, guest.id, month),
+        **wallet_summary(session, guest.id, month, today),
         "plan": {
             key: getattr(budget, key)
             for key in ("income", "food", "living", "transport", "savings", "hourly_wage")

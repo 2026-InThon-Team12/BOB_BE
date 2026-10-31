@@ -9,20 +9,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.services import goal_funding
 from app.api.finance import GoalInput, GoalOutput, IdempotencyKey
 from app.core.auth import get_guest
 from app.core.clock import get_today
 from app.core.errors import AppError
 from app.db import get_session
-from app.models import Goal, GoalReplacement, GoalSavingTransfer, Guest, Item, SavingEvent
+from app.models import Goal, GoalReplacement, Guest, Item, SavingEvent
 from app.services.finance import (
     active_goal,
-    goal_credit_balances,
     goal_summary,
     lock_guest,
     record_goal_achievement,
     request_hash,
-    saved_amount,
 )
 
 router = APIRouter(tags=["goal setup"])
@@ -96,7 +95,11 @@ def setup(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
+    lock_guest(session, guest.id)
     current = active_goal(session, guest.id)
+    if current:
+        record_goal_achievement(session, current, today)
+        session.commit()
     candidates = session.scalars(
         select(Item)
         .where(Item.guest_id == guest.id)
@@ -107,7 +110,7 @@ def setup(
     return {
         "mode": "NEXT" if current and current.achieved_on else "CHANGE" if current else "FIRST",
         "current_goal": goal_summary(session, current, today) if current else None,
-        "unallocated_savings": unallocated_savings(session, guest.id),
+        "unallocated_savings": 0,
         "candidates": [
             {
                 "item_id": item.id,
@@ -124,24 +127,28 @@ def setup(
 
 
 @router.post("/goals/preview", response_model=GoalPreviewOutput)
-def preview(body: GoalPreviewInput, session: DB, guest: Owner):
+def preview(body: GoalPreviewInput, session: DB, guest: Owner, today: Today):
+    lock_guest(session, guest.id)
     current = active_goal(session, guest.id)
+    if current:
+        record_goal_achievement(session, current, today)
+        session.commit()
     if body.mode == "FIRST":
         if current is not None or body.current_goal_id is not None:
             raise AppError(409, "ACTIVE_GOAL_EXISTS", "현재 목표 정보를 다시 확인해 주세요.")
-        starting = unallocated_savings(session, guest.id)
+        starting = 0
     else:
         if current is None or body.current_goal_id != current.id:
             raise AppError(409, "GOAL_CHANGED", "현재 목표가 바뀌었어요. 설정 화면을 다시 열어 주세요.")
         if body.mode == "NEXT":
             if not current.achieved_on:
                 raise AppError(409, "GOAL_NOT_ACHIEVED", "진행 중인 목표는 목표 바꾸기를 이용해 주세요.")
-            starting = unallocated_savings(session, guest.id)
+            starting = 0
         else:
             if current.achieved_on:
                 raise AppError(409, "GOAL_ALREADY_ACHIEVED", "달성한 목표는 다음 목표로 진행해 주세요.")
             starting = (
-                min(max(0, saved_amount(session, current.id, guest.id)), body.target_amount)
+                min(max(0, goal_summary(session, current, today)["saved_amount"]), body.target_amount)
                 if body.carry_savings
                 else 0
             )
@@ -154,7 +161,7 @@ def preview(body: GoalPreviewInput, session: DB, guest: Owner):
         "remaining_amount": remaining,
         "progress_percent": min(100, round(starting * 100 / body.target_amount, 2)),
         "achieved": remaining == 0,
-        "message": f"충동구매를 {remaining:,}원 더 참으면 죄책감 없이 살 수 있어요"
+        "message": f"목표까지 {remaining:,}원 남았어요. 남은 예산으로 달성일을 계산해요."
         if remaining
         else "이미 다 모였어요. 지금 죄책감 없이 살 수 있어요",
     }
@@ -178,14 +185,26 @@ def replace_goal(
     previous = active_goal(session, guest.id)
     if previous is None or previous.id != body.current_goal_id:
         raise AppError(409, "GOAL_CHANGED", "현재 목표가 바뀌었어요. 설정 화면을 다시 열어 주세요.")
+    record_goal_achievement(session, previous, today)
     if previous.achieved_on:
         raise AppError(409, "GOAL_ALREADY_ACHIEVED", "달성한 목표는 다음 목표로 진행해 주세요.")
-    balances = goal_credit_balances(session, previous.id, guest.id)
-    available = sum(amount for _, amount in balances)
+    previous_plan = goal_funding.plan(session, previous, today) if previous.funding else None
+    available = previous_plan["saved"] if previous_plan else 0
     carried = min(available, body.target_amount) if body.carry_savings else 0
+    reserved = (
+        previous_plan["month_allocated"]
+        if previous_plan and previous_plan["allocation_month"] == today.strftime("%Y-%m")
+        else 0
+    )
+    if previous_plan:
+        goal_funding.freeze(previous, previous_plan, today, available - carried)
     previous.active = False
     session.flush()
-    goal = Goal(guest_id=guest.id, **body.model_dump(exclude={"current_goal_id", "carry_savings"}))
+    goal = Goal(
+        guest_id=guest.id,
+        funding=goal_funding.opening(session, guest.id, today, carried, reserved),
+        **body.model_dump(exclude={"current_goal_id", "carry_savings"}),
+    )
     session.add(goal)
     session.flush()
     replacement = GoalReplacement(
@@ -198,23 +217,6 @@ def replace_goal(
         response={},
     )
     session.add(replacement)
-    session.flush()
-    remaining = carried
-    for credit, amount in balances:
-        if remaining == 0:
-            break
-        transferred = min(amount, remaining)
-        session.add(
-            GoalSavingTransfer(
-                guest_id=guest.id,
-                replacement_id=replacement.id,
-                credit_id=credit.id,
-                from_goal_id=previous.id,
-                to_goal_id=goal.id,
-                amount=transferred,
-            )
-        )
-        remaining -= transferred
     session.flush()
     record_goal_achievement(session, goal, today)
     response = jsonable_encoder(

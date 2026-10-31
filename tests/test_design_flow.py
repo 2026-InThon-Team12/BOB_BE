@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from app.models import Expense, SavingEvent, SimulationExtension
 from app.services.finance import compare_spending
 from tests.test_core import create_item, answer
-from tests.test_finance import _goal, _budget, _impulse, _decide
+from tests.test_finance import _accrue, _goal, _budget, _impulse, _decide
 
 P = "/api/v1"
 
@@ -80,13 +80,14 @@ def test_bye_and_impulse_share_goal_ledger_and_next_goal(client, guest_headers, 
     for _ in range(2):
         assert client.put(url, headers=guest_headers, json={"decision": "GIVE_UP"}).status_code == 200
     assert session.scalar(select(func.count(SavingEvent.id))) == 1
-    assert _goal(client, guest_headers, target=35000)["saved_amount"] == 30000
+    assert _goal(client, guest_headers, target=35000)["saved_amount"] == 0
     impulse = _impulse(client, guest_headers, amount=10000)
     for _ in range(2):
         assert _decide(client, guest_headers, impulse, "RESISTED").status_code == 200
     goal = client.get(P + "/goals/current", headers=guest_headers).json()
-    assert goal["saved_amount"] == 40000 and goal["progress_percent"] == 100
+    assert goal["saved_amount"] == 0 and goal["progress_percent"] == 0
     assert goal["resisted_count"] == 2 and goal["most_resisted_item"]
+    _accrue(client, guest_headers, today, 35000)
     pending = _impulse(client, guest_headers, key="pending-new-goal")
     next_goal = client.post(
         P + "/goals/current/next", headers=guest_headers, json={"name": "다음 목표", "target_amount": 100000}
@@ -94,9 +95,9 @@ def test_bye_and_impulse_share_goal_ledger_and_next_goal(client, guest_headers, 
     assert next_goal.status_code == 201 and next_goal.json()["saved_amount"] == 0
     # A later decision belongs to the goal active when it was made.
     assert _decide(client, guest_headers, pending, "RESISTED").status_code == 200
-    assert client.get(P + "/goals/current", headers=guest_headers).json()["saved_amount"] == 30000
+    assert client.get(P + "/goals/current", headers=guest_headers).json()["saved_amount"] == 0
     assert _decide(client, guest_headers, impulse, "CANCELLED").status_code == 200
-    assert client.get(P + "/goals/current", headers=guest_headers).json()["saved_amount"] == 30000
+    assert client.get(P + "/goals/current", headers=guest_headers).json()["saved_amount"] == 0
     assert client.get(P + "/wallet", headers=guest_headers).json()["spent_amount"] == 0
 
 
@@ -141,8 +142,8 @@ def test_wallet_expenses_purchase_and_impulse_deduct_once(client, guest_headers,
 
 
 @pytest.mark.parametrize("amount,expected", [(1, 1), (250, 3), (23000, 230)])
-def test_design_rounding_half_up(amount, expected):
-    assert compare_spending(amount, "2026-10", income=10000, savings=3100).delay_days == expected
+def test_design_rounding_up(amount, expected):
+    assert compare_spending(amount, "2026-10", income=6200, savings=3100).delay_days == expected
 
 
 @pytest.mark.parametrize(

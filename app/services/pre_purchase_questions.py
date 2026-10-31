@@ -5,9 +5,10 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services import goal_funding
 from app.core.errors import AppError
-from app.models import Budget, Item, Simulation, SimulationQuestion, SimulationQuestionAnswer
-from app.services.finance import active_goal, compare_spending, lock_guest
+from app.models import Item, Simulation, SimulationQuestion, SimulationQuestionAnswer
+from app.services.finance import active_goal, lock_guest
 from app.services.pre_question_catalog import BY_CODE, CATALOG, VERSION
 from app.services.purchase_questions import QuestionAI
 
@@ -97,17 +98,10 @@ def context_for(session: Session, simulation: Simulation, today: date) -> dict:
     from app.services.simulations import observation_dates
 
     item = session.get(Item, simulation.item_id)
-    month = today.strftime("%Y-%m")
-    budget = session.scalar(
-        select(Budget).where(Budget.guest_id == simulation.guest_id, Budget.month == month)
-    )
     goal = active_goal(session, simulation.guest_id)
-    comparison = compare_spending(
-        simulation.price_snapshot,
-        month,
-        income=budget.income if budget else None,
-        savings=budget.savings if budget else 0,
-    )
+    before = goal_funding.plan(session, goal, today) if goal and goal.funding else None
+    after = goal_funding.plan(session, goal, today, simulation.price_snapshot) if before else None
+    delay = max(0, (after["eta"] - before["eta"]).days) if before and before["eta"] and after["eta"] else None
     dates = observation_dates(session, simulation)
     return {
         "item_name": item.name,
@@ -118,12 +112,10 @@ def context_for(session: Session, simulation: Simulation, today: date) -> dict:
         "observation_day": dates.index(today) + 1,
         "duration_days": simulation.duration_days,
         "is_last_day": today == dates[-1],
-        "hourly_wage": budget.hourly_wage if budget else None,
-        "work_hours_estimate": round(simulation.price_snapshot / budget.hourly_wage, 2)
-        if budget and budget.hourly_wage
-        else None,
+        "hourly_wage": goal_funding.HOURLY_RATE,
+        "work_hours_estimate": round(simulation.price_snapshot / goal_funding.HOURLY_RATE, 2),
         "goal": {"id": goal.id, "name": goal.name} if goal else None,
-        "goal_delay_days": comparison.delay_days if goal else None,
+        "goal_delay_days": delay,
         "previous_answers": baseline(session, simulation, today),
     }
 
@@ -155,9 +147,9 @@ def candidates_for(session: Session, simulation: Simulation, context: dict):
 
 def reference_text(code: str, context: dict):
     if code == "WORK_VALUE":
-        return f"입력 시급 {context['hourly_wage']:,}원 기준 약 {context['work_hours_estimate']:g}시간의 근로 소득이에요."
+        return f"계산 기준 시급 {context['hourly_wage']:,}원 기준 약 {context['work_hours_estimate']:g}시간의 근로 소득이에요."
     if code == "GOAL_DELAY":
-        return f"입력한 계획 저축 기준, {context['goal']['name']} 목표가 약 {context['goal_delay_days']}일 늦어질 수 있어요."
+        return f"입력한 잔여 예산 기준, {context['goal']['name']} 목표가 약 {context['goal_delay_days']}일 늦어질 수 있어요."
     if code == "CASH_CHOICE":
         return f"등록 가격 {context['price']:,}원"
     if code == "EXPECTED_USE_DAYS":

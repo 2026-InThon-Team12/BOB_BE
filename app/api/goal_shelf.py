@@ -12,7 +12,7 @@ from app.core.clock import get_today
 from app.core.errors import AppError
 from app.db import get_session
 from app.models import Goal, Guest
-from app.services.finance import active_goal, goal_summary
+from app.services.finance import active_goal, goal_summary, lock_guest, record_goal_achievement
 
 router = APIRouter(tags=["goal shelf"])
 DB = Annotated[Session, Depends(get_session)]
@@ -35,6 +35,9 @@ def shelf_entry(goal):
 
 @router.get("/goals/shelf")
 def shelf(session: DB, guest: Owner, today: Today):
+    lock_guest(session, guest.id)
+    record_goal_achievement(session, active_goal(session, guest.id), today)
+    session.commit()
     goals = list(
         session.scalars(
             select(Goal)

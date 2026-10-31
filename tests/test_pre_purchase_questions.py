@@ -242,8 +242,8 @@ def test_hourly_wage_and_goal_delay_are_server_values_and_not_inferred(app, clie
     calls = use_ai(app, "WORK_VALUE")
     q = generate(client, guest_headers, item)
     payload = json.loads(calls[0]["messages"][0]["content"][0]["text"])
-    assert {row["template_code"] for row in payload["eligible_templates"]} == {"CASH_CHOICE"}
-    assert q["context"]["work_hours_estimate"] is None
+    assert {row["template_code"] for row in payload["eligible_templates"]} == {"CASH_CHOICE", "WORK_VALUE"}
+    assert q["context"]["work_hours_estimate"] == 6.54
     second = create_item(client, guest_headers, price=70000, key="with-explicit-budget", mode="ADAPTIVE")
     budget = {
         "income": 1000000,
@@ -264,9 +264,9 @@ def test_hourly_wage_and_goal_delay_are_server_values_and_not_inferred(app, clie
     today.value += timedelta(days=4)
     use_ai(app, "WORK_VALUE")
     q = generate(client, guest_headers, second)
-    assert q["context"]["work_hours_estimate"] == 7
-    assert "약 7시간" in q["reference_text"]
-    assert q["context"]["goal_delay_days"] == 14
+    assert q["context"]["work_hours_estimate"] == 6.54
+    assert "약 6.54시간" in q["reference_text"]
+    assert q["context"]["goal_delay_days"] == 4
     client.put(P + "/budgets/2026-11", headers=guest_headers, json={**budget, "hourly_wage": 20000})
     assert generate(client, guest_headers, second) == q
 

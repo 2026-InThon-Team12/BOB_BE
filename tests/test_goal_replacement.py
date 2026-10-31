@@ -5,7 +5,7 @@ from sqlalchemy import func, select, text
 
 from app.models import Expense, Goal, GoalReplacement, GoalSavingTransfer, SavingEvent
 from app.services.finance import saved_amount
-from tests.test_finance import _budget, _decide, _goal, _impulse
+from tests.test_finance import _accrue, _budget, _decide, _goal, _impulse
 from tests.test_migration_upgrade import migration, migration_connection  # noqa: F401
 
 P = "/api/v1"
@@ -47,6 +47,7 @@ def test_replacement_preserves_money_without_new_savings_or_expenses(
     previous = _goal(client, guest_headers, target=240000)
     impulse = _impulse(client, guest_headers, amount=151000)
     _decide(client, guest_headers, impulse, "RESISTED")
+    _accrue(client, guest_headers, today, 151000)
     response = replace(client, guest_headers, previous, target=target, carry=carry)
     assert response.status_code == 201, response.text
     result = response.json()
@@ -54,8 +55,8 @@ def test_replacement_preserves_money_without_new_savings_or_expenses(
     assert (result["carried_amount"], result["retained_amount"]) == (moved, retained)
     assert goal["id"] != previous["id"] and goal["saved_amount"] == moved
     assert goal["remaining_amount"] == target - moved and goal["source_url"].endswith("/new")
-    assert goal["remaining_days"] == (target - moved + 9999) // 10000
-    assert goal["resisted_count"] == (1 if moved else 0)
+    assert goal["remaining_days"] == (0 if moved == target else 9 if moved else 40)
+    assert goal["resisted_count"] == 0
     old = session.get(Goal, previous["id"])
     assert not old.active and old.achieved_on is None and old.name == previous["name"]
     assert saved_amount(session, old.id, old.guest_id) == retained
@@ -76,43 +77,47 @@ def test_replacement_preserves_money_without_new_savings_or_expenses(
     assert replace(client, guest_headers, previous, target=target + 1, carry=carry).status_code == 409
 
 
-def test_cancellation_follows_partial_credit_transfers_and_keeps_achievement(client, guest_headers, session):
+def test_cancellation_follows_partial_credit_transfers_and_keeps_achievement(
+    client, guest_headers, session, today
+):
     previous = _goal(client, guest_headers, target=240000)
     first = _impulse(client, guest_headers, amount=60000)
     second = _impulse(client, guest_headers, amount=91000, key="second-credit-001")
     _decide(client, guest_headers, first, "RESISTED")
     _decide(client, guest_headers, second, "RESISTED")
+    _accrue(client, guest_headers, today, 151000)
     result = replace(client, guest_headers, previous, target=100000).json()
     assert result["retained_amount"] == 51000
-    assert session.scalar(select(func.count(GoalSavingTransfer.id))) == 2
+    assert session.scalar(select(func.count(GoalSavingTransfer.id))) == 0
     _decide(client, guest_headers, second, "CANCELLED")
     current = client.get(P + "/goals/current", headers=guest_headers).json()
-    assert current["saved_amount"] == 60000 and current["resisted_count"] == 1
-    assert current["achieved"] and not current["currently_funded"]
+    assert current["saved_amount"] == 100000 and current["resisted_count"] == 0
+    assert current["achieved"] and current["currently_funded"]
     old = session.get(Goal, previous["id"])
-    assert saved_amount(session, old.id, old.guest_id) == 0
+    assert saved_amount(session, old.id, old.guest_id) == 51000
     assert client.get(P + "/goals/shelf", headers=guest_headers).json()["items"][0]["saved_amount"] == 100000
     _decide(client, guest_headers, first, "CANCELLED")
-    assert client.get(P + "/goals/current", headers=guest_headers).json()["saved_amount"] == 0
+    assert client.get(P + "/goals/current", headers=guest_headers).json()["saved_amount"] == 100000
     assert session.scalar(select(func.sum(SavingEvent.amount))) == 0
 
 
 def test_repeated_replacements_do_not_duplicate_credit_and_reverse_whole_chain(
-    client, guest_headers, session
+    client, guest_headers, session, today
 ):
     first = _goal(client, guest_headers, target=240000)
     impulse = _impulse(client, guest_headers, amount=30000)
     _decide(client, guest_headers, impulse, "RESISTED")
+    _accrue(client, guest_headers, today, 30000)
     second = replace(client, guest_headers, first).json()["goal"]
     third = replace(client, guest_headers, second, target=100000, key="replace-goal-002").json()["goal"]
-    assert third["saved_amount"] == 30000 and third["resisted_count"] == 1
+    assert third["saved_amount"] == 30000 and third["resisted_count"] == 0
     assert replace(client, guest_headers, first, key="stale-request-001").status_code == 409
     _decide(client, guest_headers, impulse, "CANCELLED")
     for goal in session.scalars(select(Goal)):
-        assert saved_amount(session, goal.id, goal.guest_id) == 0
+        assert saved_amount(session, goal.id, goal.guest_id) == (30000 if goal.id == third["id"] else 0)
 
 
-def test_replacement_ownership_and_required_idempotency(client, guest_headers, session):
+def test_replacement_ownership_and_required_idempotency(client, guest_headers, session, today):
     goal = _goal(client, guest_headers)
     other = client.post(P + "/guest-sessions").json()
     h = {"Authorization": "Bearer " + other["access_token"]}
@@ -128,21 +133,23 @@ def test_replacement_ownership_and_required_idempotency(client, guest_headers, s
     assert session.scalar(select(func.count(Goal.id))) == 1
     impulse = _impulse(client, guest_headers, amount=100000)
     _decide(client, guest_headers, impulse, "RESISTED")
+    _accrue(client, guest_headers, today, 100000)
     assert replace(client, guest_headers, goal).json()["error"]["code"] == "GOAL_ALREADY_ACHIEVED"
 
 
-def test_concurrent_replacement_is_exactly_once(client, guest_headers, session):
+def test_concurrent_replacement_is_exactly_once(client, guest_headers, session, today):
     if session.bind.dialect.name != "postgresql":
         pytest.skip("requires PostgreSQL row locks")
     previous = _goal(client, guest_headers)
     impulse = _impulse(client, guest_headers, amount=30000)
     _decide(client, guest_headers, impulse, "RESISTED")
+    _accrue(client, guest_headers, today, 30000)
     with ThreadPoolExecutor(max_workers=4) as pool:
         responses = list(pool.map(lambda _: replace(client, guest_headers, previous), range(4)))
     assert all(r.status_code == 201 for r in responses)
     assert all(r.json() == responses[0].json() for r in responses)
     assert session.scalar(select(func.count(GoalReplacement.id))) == 1
-    assert session.scalar(select(func.count(GoalSavingTransfer.id))) == 1
+    assert session.scalar(select(func.count(GoalSavingTransfer.id))) == 0
     assert session.scalar(select(func.count(Goal.id)).where(Goal.active.is_(True))) == 1
 
 
@@ -186,3 +193,28 @@ def test_replacement_migration_keeps_existing_ledger_and_protects_history(migrat
     with pytest.raises(RuntimeError, match="goal replacement history"):
         change.downgrade()
     assert db.scalar(text("SELECT amount FROM goal_saving_transfers")) == 30000
+
+
+def test_calendar_migration_preserves_ledger_and_starts_today(migration_connection):  # noqa: F811
+    from app.core.clock import kst_today
+    db = migration_connection
+    for name in ('0001_initial_schema.py','0002_design_flow.py','0003_purchase_questions.py',
+                 '0004_pre_purchase_questions.py','0005_handoff_local_flow.py',
+                 '0006_achieved_goal_shelf.py','0007_goal_replacements.py'):
+        migration(name).upgrade()
+    db.execute(text("INSERT INTO guests VALUES ('g', :hash, now())"), {'hash': 'e' * 64})
+    db.execute(text("""INSERT INTO goals (id,guest_id,name,target_amount,active,created_at,achieved_on)
+        VALUES ('active','g','active',240000,true,now(),NULL),
+               ('shelf','g','shelf',10000,false,now(),'2026-10-01')"""))
+    db.execute(text("""INSERT INTO items (id,guest_id,name,price,category,purchase_reason,purchase_reasons,source,created_at)
+        VALUES ('i','g','coat',30000,'CLOTHING','NECESSITY','["NECESSITY"]','MANUAL',now())"""))
+    db.execute(text("""INSERT INTO saving_events (id,guest_id,goal_id,item_id,kind,amount,occurred_on,created_at)
+        VALUES ('c','g','active','i','CREDIT',30000,'2026-10-31',now())"""))
+    change = migration('0008_calendar_goal_funding.py')
+    change.upgrade()
+    f = db.scalar(text("SELECT funding FROM goals WHERE id='active'"))
+    assert f['startsOn'] == kst_today().isoformat() and f['openingBalance'] == 0
+    assert db.scalar(text("SELECT funding FROM goals WHERE id='shelf'")) is None
+    assert db.scalar(text("SELECT amount FROM saving_events")) == 30000
+    with pytest.raises(RuntimeError, match='calendar funding history'):
+        change.downgrade()

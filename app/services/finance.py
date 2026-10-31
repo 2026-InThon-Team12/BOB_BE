@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.services import goal_funding
 from app.models import Budget, Expense, Goal, GoalSavingTransfer, Guest, Impulse, Item, SavingEvent
 
 
@@ -47,6 +48,8 @@ def compare_spending(
     living: int = 0,
     transport: int = 0,
     savings: int = 0,
+    spent: int = 0,
+    today: date | None = None,
 ) -> BudgetComparison:
     """Compare spending with potential saving capacity, not account balance."""
     days = month_days(month)
@@ -57,10 +60,11 @@ def compare_spending(
     components = (income, food, living, transport, savings)
     if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in components):
         raise ValueError("budget components must be nonnegative integers")
-    available = savings
+    available = income - food - living - transport - savings - spent
     if available <= 0:
         return BudgetComparison(month, available, None, "NO_AVAILABLE_BUDGET")
-    delay = max(1, (2 * amount * days + available) // (2 * available))
+    remaining_days = days - today.day + 1 if today and today.strftime("%Y-%m") == month else days
+    delay = max(1, (amount * remaining_days + available - 1) // available)
     return BudgetComparison(month, available, delay, None)
 
 
@@ -109,6 +113,11 @@ def goal_credit_balances(session: Session, goal_id: str, guest_id: str) -> list[
 
 
 def saved_amount(session: Session, goal_id: str, guest_id: str) -> int:
+    goal = session.get(Goal, goal_id)
+    if goal and goal.guest_id == guest_id and goal.funding:
+        from app.core.clock import kst_today
+
+        return goal_funding.plan(session, goal, kst_today())["saved"]
     return sum(amount for _, amount in goal_credit_balances(session, goal_id, guest_id))
 
 
@@ -124,16 +133,13 @@ def goal_summary(session: Session, goal: Goal, today: date | None = None) -> dic
     today = today or kst_today()
     balances = goal_credit_balances(session, goal.id, goal.guest_id)
     saved = sum(amount for _, amount in balances)
-    budget = session.scalar(
-        select(Budget).where(Budget.guest_id == goal.guest_id, Budget.month == today.strftime("%Y-%m"))
-    )
-    daily = budget.savings / month_days(budget.month) if budget and budget.savings > 0 else None
+    result = goal_funding.plan(session, goal, today) if goal.funding else None
+    if result:
+        saved = result["saved"]
+    daily = result["daily"] if result else None
     left = max(0, goal.target_amount - saved)
-    eta_days = (
-        0
-        if left == 0
-        else ((left * month_days(budget.month) + budget.savings - 1) // budget.savings if daily else None)
-    )
+    eta = result["eta"] if result else goal.achieved_on
+    eta_days = max(0, (eta - today).days) if eta else None
     credits = [event for event, _ in balances]
     labels = {}
     for event in credits:
@@ -158,7 +164,9 @@ def goal_summary(session: Session, goal: Goal, today: date | None = None) -> dic
         "currently_funded": saved >= goal.target_amount,
         "is_virtual": True,
         "daily_savings": daily,
-        "estimated_completion_on": safe_eta(today, eta_days),
+        "estimated_completion_on": eta,
+        "funding_method": "CALENDAR_BUDGET" if goal.funding else "LEGACY_VIRTUAL",
+        "uses_previous_budget": result["uses_previous_budget"] if result else False,
         "remaining_days": eta_days,
         "resisted_count": len(credits),
         "elapsed_days": max(
@@ -176,13 +184,17 @@ def goal_summary(session: Session, goal: Goal, today: date | None = None) -> dic
 
 
 def record_goal_achievement(session: Session, goal: Goal | None, today: date) -> None:
-    """Called inside owner-locked writes; GET never creates an achievement."""
+    """Settle completed calendar days inside the owner's transaction exactly once."""
     if goal is None or goal.achieved_on is not None:
         return
     session.flush()
-    if saved_amount(session, goal.id, goal.guest_id) < goal.target_amount:
+    result = goal_funding.plan(session, goal, today) if goal.funding else None
+    saved = result["saved"] if result else saved_amount(session, goal.id, goal.guest_id)
+    if saved < goal.target_amount:
         return
-    goal.achieved_on = today
+    if result:
+        goal_funding.freeze(goal, result, today)
+    goal.achieved_on = (result["achieved_on"] if result else None) or today
     goal.completed_on = goal.completed_on or today
     session.flush()
     summary = goal_summary(session, goal, today)
@@ -191,7 +203,10 @@ def record_goal_achievement(session: Session, goal: Goal | None, today: date) ->
     }
 
 
-def wallet_summary(session: Session, guest_id: str, month: str) -> dict:
+def wallet_summary(session: Session, guest_id: str, month: str, today: date | None = None) -> dict:
+    from app.core.clock import kst_today
+
+    today = today or kst_today()
     days = month_days(month)
     start = date.fromisoformat(month + "-01")
     end = start + timedelta(days=days)
@@ -218,13 +233,16 @@ def wallet_summary(session: Session, guest_id: str, month: str) -> dict:
         "spent_amount": spent,
         "remaining_amount": available - spent if available is not None else None,
         "planned_savings": budget.savings if budget else None,
-        "daily_savings": budget.savings / days if budget and budget.savings > 0 else None,
+        "daily_savings": max(0, available - spent)
+        / (days - today.day + 1 if today.strftime("%Y-%m") == month else days)
+        if available is not None and available - spent > 0
+        else None,
         "is_account_balance": False,
     }
 
 
 def compare_wallet(session: Session, guest_id: str, today: date, price: int) -> dict:
-    wallet = wallet_summary(session, guest_id, today.strftime("%Y-%m"))
+    wallet = wallet_summary(session, guest_id, today.strftime("%Y-%m"), today)
     remaining = wallet["remaining_amount"]
     return {
         "remaining_amount": remaining,

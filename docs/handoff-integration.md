@@ -1,3 +1,5 @@
+> 2026-11-01 변경: 목표·적립·근로 시간에 관한 아래 초기 명세는 [달력 적립 명세](calendar-funding.md)로 대체되었습니다. 포기/참기 이벤트를 게이지에 합산하지 않습니다.
+
 # 2026-10-31 handoff 연동 계약
 
 배포 API: `https://bob-be.vercel.app/api/v1` · [Swagger](https://bob-be.vercel.app/docs).

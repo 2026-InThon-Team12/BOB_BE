@@ -91,7 +91,7 @@ def test_give_up_lifecycle(client, guest_headers, today, session_factory, mode, 
     reason = next(r for r in report["purchase_reasons"] if r["reason"] == "NECESSITY")
     assert reason["abandoned_count"] == 1 and reason["abandonment_rate"] == 1
     assert not report["categories"]
-    assert len(client.get(P + "/goals/shelf", headers=guest_headers).json()["items"]) == 1
+    assert len(client.get(P + "/goals/shelf", headers=guest_headers).json()["items"]) == 0
     for days in (0, 1, 30):
         today.value = START + timedelta(days=offset + days)
         assert not client.get(P + "/home", headers=guest_headers).json()["simulations"]

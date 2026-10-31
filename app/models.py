@@ -276,6 +276,7 @@ class Goal(Base):
     actual_price: Mapped[int | None] = mapped_column(BigInteger)
     purchase_id: Mapped[str | None] = mapped_column(ForeignKey("purchases.id"), unique=True)
     shelf_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    funding: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

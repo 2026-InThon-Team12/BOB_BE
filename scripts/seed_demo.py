@@ -195,6 +195,7 @@ def seed_demo(session: Session, today: date, guest_id: str | None = None) -> dic
             guest_id=guest.id,
             name="[데모] 미쿠 피규어",
             target_amount=240000,
+            funding={"startsOn": today.isoformat(), "openingBalance": 0, "baselineSpent": 168000, "reservedThisMonth": 0},
             created_at=datetime.combine(today - timedelta(days=10), datetime.min.time(), tzinfo=timezone.utc),
         )
         session.add(goal)

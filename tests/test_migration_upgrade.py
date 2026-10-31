@@ -47,6 +47,7 @@ def test_empty_migration_round_trip(migration_connection):
     handoff = migration("0005_handoff_local_flow.py")
     shelf = migration("0006_achieved_goal_shelf.py")
     replacements = migration("0007_goal_replacements.py")
+    funding = migration("0008_calendar_goal_funding.py")
     initial.upgrade()
     design.upgrade()
     questions.upgrade()
@@ -54,6 +55,8 @@ def test_empty_migration_round_trip(migration_connection):
     handoff.upgrade()
     shelf.upgrade()
     replacements.upgrade()
+    funding.upgrade()
+    funding.downgrade()
     replacements.downgrade()
     shelf.downgrade()
     handoff.downgrade()
@@ -68,6 +71,7 @@ def test_empty_migration_round_trip(migration_connection):
     handoff.upgrade()
     shelf.upgrade()
     replacements.upgrade()
+    funding.upgrade()
 
 
 def test_upgrade_preserves_legacy_reviews_and_backfills_ledgers(migration_connection):

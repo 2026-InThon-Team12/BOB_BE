@@ -5,13 +5,13 @@ from sqlalchemy import func, select, text
 
 from app.models import Expense, Purchase
 from tests.test_core import create_item
-from tests.test_finance import _decide, _goal, _impulse
+from tests.test_finance import _accrue, _decide, _goal, _impulse
 from tests.test_migration_upgrade import migration, migration_connection  # noqa: F401
 
 P = "/api/v1"
 
 
-def test_product_url_is_returned_without_recording_a_purchase(client, guest_headers, session):
+def test_product_url_is_returned_without_recording_a_purchase(client, guest_headers, session, today):
     url = "https://shop.example.com/products/figure?color=blue"
     goal = client.post(
         P + "/goals",
@@ -24,6 +24,9 @@ def test_product_url_is_returned_without_recording_a_purchase(client, guest_head
     assert session.scalar(select(func.count(Expense.id))) == 0
     impulse = _impulse(client, guest_headers, amount=10000)
     _decide(client, guest_headers, impulse, "RESISTED")
+    shelf = client.get(P + "/goals/shelf", headers=guest_headers).json()
+    assert shelf["items"] == []
+    _accrue(client, guest_headers, today, 10000)
     shelf = client.get(P + "/goals/shelf", headers=guest_headers).json()
     assert shelf["items"][0]["source_url"] == url
     assert (
@@ -68,7 +71,9 @@ def test_unallocated_credit_and_lowering_target_create_achievements(client, gues
     impulse = _impulse(client, guest_headers, amount=10000)
     _decide(client, guest_headers, impulse, "RESISTED")
     goal = _goal(client, guest_headers, target=10000)
-    assert goal["achieved_on"] == today.value.isoformat() and goal["shelf_count"] == 1
+    assert goal["achieved_on"] is None
+    goal = _accrue(client, guest_headers, today, 10000)
+    assert goal["achieved_on"] == (today.value - timedelta(days=1)).isoformat() and goal["shelf_count"] == 1
     next_goal = client.post(
         P + "/goals/current/next",
         headers=guest_headers,
@@ -77,12 +82,13 @@ def test_unallocated_credit_and_lowering_target_create_achievements(client, gues
     assert next_goal["source_url"].endswith("/next") and next_goal["achieved_on"] is None
     impulse2 = _impulse(client, guest_headers, key="second-goal-credit", amount=10000)
     _decide(client, guest_headers, impulse2, "RESISTED")
+    _accrue(client, guest_headers, today, 10000)
     patched = client.patch(P + "/goals/current", headers=guest_headers, json={"target_amount": 10000}).json()
-    assert patched["achieved_on"] == today.value.isoformat()
+    assert patched["achieved_on"] == (today.value - timedelta(days=1)).isoformat()
     assert client.get(P + "/goals/shelf", headers=guest_headers).json()["count"] == 2
 
 
-def test_item_bye_also_displays_achieved_goal(client, guest_headers, today, session):
+def test_item_bye_preserves_history_without_funding_goal(client, guest_headers, today, session):
     _goal(client, guest_headers, target=10000)
     item = create_item(client, guest_headers)
     today.value += timedelta(days=4)
@@ -93,7 +99,7 @@ def test_item_bye_also_displays_achieved_goal(client, guest_headers, today, sess
         == 200
     )
     shelf = client.get(P + "/goals/shelf", headers=guest_headers).json()
-    assert shelf["count"] == 1 and shelf["items"][0]["saved_amount"] == 30000
+    assert shelf["count"] == 0
     assert session.scalar(select(func.count(Purchase.id))) == 0
 
 

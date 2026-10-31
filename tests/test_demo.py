@@ -17,6 +17,6 @@ def test_demo_has_each_stage_without_changing_clock(session, today, client):
     assert review.json()["difference_percentage_points"] == 60.71
     assert review.json()["overprediction_ratio_estimate"] == 4.4
     home = client.get("/api/v1/home", headers=headers).json()
-    assert home["goal"]["saved_amount"] == 151000
+    assert home["goal"]["saved_amount"] == 0
     assert home["wallet"]["remaining_amount"] == 112000
-    assert home["goal"]["daily_savings"] == 5800
+    assert home["goal"]["daily_savings"] == 112000
