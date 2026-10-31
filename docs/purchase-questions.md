@@ -1,3 +1,5 @@
+> 2026-11-01: 신규 질문은 [swipe-v2 계약](swipe-questions.md)으로 변경했습니다. 아래는 기존 저장 기록의 해석을 위한 이전 계약입니다.
+
 # 구매 후 AI 맞춤 질문
 
 > 신규 `LOCAL` 구매도 이 고정 문항을 사용하지만 질문·답변 원문을 기기에만 저장합니다. `/purchases/{id}/local-question`은 [handoff 연동 계약](handoff-integration.md)을 따릅니다. 아래 DB 저장 API는 이전 모드 호환용입니다.

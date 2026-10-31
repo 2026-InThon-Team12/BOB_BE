@@ -25,7 +25,7 @@ CATALOG = (
         "DISCOVERY",
         "TRIGGER",
         "이 물건을 어떻게 알게 됐어요?",
-        "{item}을 어떻게 알게 됐어요?",
+        "{item}을(를) 어떻게 알게 됐어요?",
         choices(
             ("ADVERTISEMENT", "광고"),
             ("SNS", "SNS·유튜버"),
@@ -38,7 +38,7 @@ CATALOG = (
         "CURRENT_MOOD",
         "TRIGGER",
         "지금 기분은 어때요?",
-        "{item}을 사고 싶은 지금 기분은 어때요?",
+        "{item}을(를) 사고 싶은 지금 기분은 어때요?",
         choices(
             ("STRESS", "스트레스"), ("BORED", "심심함"), ("HAPPY", "기분 좋음"), ("NORMAL", "평소와 같음")
         ),
@@ -85,14 +85,14 @@ CATALOG = (
         "FIRST_USE",
         "PREDICTION",
         "산다면 언제, 어디서 처음 쓸 것 같아요?",
-        "{item}을 산다면 언제, 어떤 상황에서 처음 쓸 것 같아요?",
+        "{item}을(를) 산다면 언제, 어떤 상황에서 처음 쓸 것 같아요?",
         FIRST_USE_SPEC,
     ),
     Template(
         "EXPECTED_USE_DAYS",
         "PREDICTION",
         "한 달에 몇 번 쓸 것 같아요?",
-        "{item}을 산 뒤 30일 동안 며칠 사용할 것 같아요?",
+        "{item}을(를) 산 뒤 30일 동안 며칠 사용할 것 같아요?",
         {
             "type": "INTEGER",
             "unit": "DAYS",
@@ -112,14 +112,14 @@ CATALOG = (
         "WORK_VALUE",
         "VALUE",
         "이건 알바 ○시간이에요. 그만큼의 가치가 있나요?",
-        "{item}을 사는 데 필요한 근로 시간을 생각하면 그만큼의 가치가 있나요?",
+        "{item}을(를) 사는 데 필요한 근로 시간을 생각하면 그만큼의 가치가 있나요?",
         choices(("YES", "가치가 있어요"), ("NO", "그만큼은 아닌 것 같아요"), ("UNSURE", "잘 모르겠어요")),
     ),
     Template(
         "GOAL_DELAY",
         "VALUE",
         "목표를 ○일 미루고도 사고 싶나요?",
-        "내 목표 달성이 표시된 일수만큼 늦어져도 {item}을 사고 싶나요?",
+        "내 목표 달성이 표시된 일수만큼 늦어져도 {item}을(를) 사고 싶나요?",
         YES_NO,
     ),
     Template(
@@ -133,7 +133,7 @@ CATALOG = (
         "SHOW_TO",
         "PERSISTENCE",
         "사고 나서 제일 먼저 누구에게 보여주고 싶어요?",
-        "{item}을 사고 나서 제일 먼저 누구에게 보여주고 싶어요?",
+        "{item}을(를) 사고 나서 제일 먼저 누구에게 보여주고 싶어요?",
         choices(
             ("SELF", "나 자신"),
             ("FAMILY", "가족·연인"),
@@ -147,7 +147,7 @@ CATALOG = (
         "REPLACE_IF_LOST",
         "PERSISTENCE",
         "산 뒤에 잃어버리면 똑같은 걸 다시 살 건가요?",
-        "{item}을 산 뒤 잃어버린다면 똑같은 것을 다시 살 건가요?",
+        "{item}을(를) 산 뒤 잃어버린다면 똑같은 것을 다시 살 건가요?",
         YES_NO,
     ),
 )

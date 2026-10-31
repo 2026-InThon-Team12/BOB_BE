@@ -14,7 +14,8 @@ from app.core.errors import AppError
 from app.integrations.lablup import LablupClient, LablupError
 from app.models import Item, Purchase, PurchaseQuestion, PurchaseQuestionAnswer, Simulation
 from app.services.finance import active_goal, lock_guest
-from app.services.question_catalog import BY_CODE, CATALOG, VERSION
+from app.services.question_wording import ITEM_PARTICLE_RULE, normalize_item_particle
+from app.services import swipe_questions as swipe
 
 
 def month_anniversary(day: date, months: int) -> date:
@@ -91,6 +92,7 @@ def context_for(session: Session, purchase: Purchase, today: date) -> dict:
         "category": item.category,
         "purchase_price": purchase.actual_price,
         "purchase_reasons": item.purchase_reasons or [item.purchase_reason],
+        "reason_other_text": item.reason_other_text,
         "purchased_on": purchase.purchased_on.isoformat(),
         "question_date": today.isoformat(),
         "elapsed_days": (today - purchase.purchased_on).days,
@@ -108,7 +110,6 @@ def context_for(session: Session, purchase: Purchase, today: date) -> dict:
 
 
 def candidates_for(session: Session, purchase: Purchase, today: date, context: dict):
-    stages = stages_for(purchase.purchased_on, today)
     history = list(
         session.scalars(
             select(PurchaseQuestion)
@@ -116,34 +117,7 @@ def candidates_for(session: Session, purchase: Purchase, today: date, context: d
             .order_by(PurchaseQuestion.question_date.desc())
         )
     )
-    candidates = [row for row in CATALOG if row.stage in stages]
-    window = context["usage_window"]
-    if window is None or any(
-        row.template_code == "USAGE_DAYS" and row.context_snapshot.get("usage_window") == window
-        for row in history
-    ):
-        candidates = [row for row in candidates if row.code != "USAGE_DAYS"]
-    if not context["goal"]:
-        candidates = [row for row in candidates if row.code != "GOAL_TRADEOFF"]
-    # This question is conditional; USED remains an option if use has since changed.
-    latest_usage = next((row for row in history if row.template_code == "USAGE_DAYS"), None)
-    latest_answer = (
-        session.scalar(
-            select(PurchaseQuestionAnswer).where(PurchaseQuestionAnswer.question_id == latest_usage.id)
-        )
-        if latest_usage
-        else None
-    )
-    if latest_answer is None or latest_answer.choice_code != "D0":
-        candidates = [row for row in candidates if row.code != "NON_USE_REASON"]
-    recent = {row.template_code for row in history[:2]}
-    fresh = [row for row in candidates if row.code not in recent]
-    candidates = fresh or candidates
-    # A weekly measurement is offered until generated; AI still selects among eligible templates.
-    candidates.sort(
-        key=lambda template: (sum(row.template_code == template.code for row in history), template.code)
-    )
-    return candidates
+    return swipe.select_question(swipe.POST_CATALOG, history, context)
 
 
 class AdaptedQuestion(BaseModel):
@@ -154,6 +128,8 @@ class AdaptedQuestion(BaseModel):
 
 def reference_text(code: str, context: dict) -> str | None:
     """Render factual details on the server instead of asking AI to invent amounts."""
+    if code in swipe.POST_BY_CODE:
+        return swipe.reference_text(code, context)
     if code == "USAGE_DAYS":
         window = context["usage_window"]
         return f"{window['start']} ~ {window['end']} (7일)"
@@ -194,6 +170,8 @@ class QuestionAI:
         self.client = client or LablupClient(settings)
 
     def adapt(self, candidates, context: dict) -> tuple[str, str, str, str | None]:
+        if candidates[0].code in swipe.BY_CODE:
+            return swipe.adapt_question(self.client, candidates[0], context)
         fallback = candidates[0]
         system = (
             f"You adapt ONE fixed {self.phase} question into Korean for the given item. "
@@ -208,7 +186,7 @@ class QuestionAI:
             "Usage means distinct DAYS, never number of times. For USAGE_DAYS refer to 표시된 기간; "
             "do not change it to today or a month. Never treat desire or mood as actual usage. "
             'Return JSON only: {"template_code":string,"question_text":string}. No answer options or other fields. '
-            "The question must be 5-300 characters." + self.extra_rules
+            "The question must be 5-300 characters." + ITEM_PARTICLE_RULE + self.extra_rules
         )
         content = [
             {
@@ -234,6 +212,9 @@ class QuestionAI:
                 raw = self.client.message(system=system, content=content, max_tokens=600)
                 try:
                     draft = AdaptedQuestion.model_validate_json(raw)
+                    draft.question_text = normalize_item_particle(draft.question_text, context["item_name"])
+                    if len(draft.question_text) > 300:
+                        raise ValueError("normalized question exceeds the length limit")
                     if draft.template_code not in {row.code for row in candidates}:
                         raise ValueError("not an eligible template")
                     if draft.template_code == "USAGE_DAYS" and (
@@ -280,19 +261,10 @@ def generate_question(
     # Never hold a database lock/transaction while waiting for the model.
     session.commit()
     code, wording, method, reason = ai.adapt(candidates, context)
-    template = BY_CODE[code]
+    template = swipe.POST_BY_CODE[code]
     context["template_original"] = template.original
     context["reference_text"] = reference_text(code, context)
     spec = copy.deepcopy(template.answer_spec)
-    if code == "USAGE_DAYS":
-        spec = {
-            "type": "CHOICE",
-            "unit": "DAYS",
-            "options": [
-                {"code": f"D{number}", "label": f"{number}일", "value": number} for number in range(8)
-            ]
-            + [{"code": "UNSURE", "label": "잘 모르겠어요"}],
-        }
     lock_guest(session, guest_id)
     # A concurrent retry may have won; its rendered wording is authoritative.
     existing = session.scalar(
@@ -308,7 +280,7 @@ def generate_question(
         purchase_id=purchase.id,
         question_date=today,
         template_code=code,
-        template_version=VERSION,
+        template_version=swipe.VERSION,
         stage=template.stage,
         question_text=wording,
         answer_spec=spec,

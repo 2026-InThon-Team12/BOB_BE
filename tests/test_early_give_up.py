@@ -146,9 +146,9 @@ def test_give_up_retains_existing_question_and_answer(
     item = register(client, guest_headers, mode)
     today.value += timedelta(days=1)
     if mode == "ADAPTIVE":
-        use_ai(app, "CURRENT_MOOD")
+        use_ai(app)
         question = generate(client, guest_headers, item)
-        assert submit(client, guest_headers, question, choice_code="STRESS").status_code == 200
+        assert submit(client, guest_headers, question, choice_code="YES").status_code == 200
     else:
         assert (
             client.put(

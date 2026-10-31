@@ -17,7 +17,7 @@ from app.services.pre_purchase_questions import (
     question_output,
     save_answer,
 )
-from app.services.pre_question_catalog import catalog_output
+from app.services.swipe_questions import catalog_output
 
 router = APIRouter(tags=["pre-purchase questions"])
 DB = Annotated[Session, Depends(get_session)]
@@ -31,7 +31,7 @@ def get_pre_question_ai(settings: Annotated[Settings, Depends(get_settings)]):
 
 @router.get("/pre-purchase-question-templates")
 def question_templates():
-    return catalog_output()
+    return catalog_output("pre")
 
 
 @router.post("/simulations/{simulation_id}/daily-question", response_model=SimulationQuestionOutput)

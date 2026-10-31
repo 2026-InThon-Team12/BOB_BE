@@ -41,42 +41,42 @@ CATALOG = (
         "EXPECTATION",
         "IMMEDIATE",
         "받아보니 기대했던 것과 비교해 어때요?",
-        "{item}을 받아보니 기대했던 것과 비교해 어때요?",
+        "{item}을(를) 받아보니 기대했던 것과 비교해 어때요?",
         choices(("ABOVE", "기대 이상"), ("SIMILAR", "비슷함"), ("BELOW", "기대 이하")),
     ),
     Template(
         "MOOD",
         "IMMEDIATE",
         "지금 기분은?",
-        "{item}을 산 지금 기분은 어떤가요?",
+        "{item}을(를) 산 지금 기분은 어떤가요?",
         choices(("EXCITED", "설렘"), ("NEUTRAL", "덤덤함"), ("REGRET", "살짝 후회")),
     ),
     Template(
         "CHAIN_PURCHASE",
         "IMMEDIATE",
         "이거 사고 나서 바로 또 사고 싶은 게 생겼나요?",
-        "{item}을 사고 나서 바로 또 사고 싶은 게 생겼나요?",
+        "{item}을(를) 사고 나서 바로 또 사고 싶은 게 생겼나요?",
         YES_NO,
     ),
     Template(
         "USAGE_DAYS",
         "USAGE",
         "이번 주에 몇 번 썼어요?",
-        "{item}을 표시된 기간 동안 며칠 사용했나요?",
+        "{item}을(를) 표시된 기간 동안 며칠 사용했나요?",
         {"type": "CHOICE", "options": []},
     ),
     Template(
         "USAGE_CONTEXT",
         "USAGE",
         "주로 언제 썼어요?",
-        "{item}을 최근에 주로 어떤 상황에서 사용했나요?",
+        "{item}을(를) 최근에 주로 어떤 상황에서 사용했나요?",
         CONTEXTS,
     ),
     Template(
         "NON_USE_REASON",
         "USAGE",
         "안 썼다면 이유는?",
-        "{item}을 사용하지 않았다면 이유는 무엇인가요?",
+        "{item}을(를) 사용하지 않았다면 이유는 무엇인가요?",
         choices(
             ("NO_OCCASION", "쓸 일이 없었음"),
             ("INCONVENIENT", "생각보다 불편"),
@@ -89,7 +89,7 @@ CATALOG = (
         "BUY_AGAIN",
         "VALUE",
         "지금 다시 고른다면, 이걸 살 건가요?",
-        "지금 다시 고른다면 {item}을 살 건가요?",
+        "지금 다시 고른다면 {item}을(를) 살 건가요?",
         choices(
             ("SAME", "그대로 산다"),
             ("CHEAPER", "더 싼 걸 산다"),
@@ -125,7 +125,7 @@ CATALOG = (
         "PROBLEM_SOLVED",
         "MOTIVE",
         "살 때 이유가 구매 전 답이었는데, 실제로 그 문제가 해결됐나요?",
-        "{item}을 살 때 기대했던 필요나 문제가 실제로 해결됐나요?",
+        "{item}을(를) 살 때 기대했던 필요나 문제가 실제로 해결됐나요?",
         choices(
             ("YES", "해결됐어요"),
             ("PARTLY", "일부 해결됐어요"),
@@ -137,7 +137,7 @@ CATALOG = (
         "TRUE_MOTIVE",
         "MOTIVE",
         "돌아보면 진짜 산 이유는 뭐였던 것 같아요?",
-        "돌아보면 {item}을 산 진짜 이유는 무엇이었던 것 같아요?",
+        "돌아보면 {item}을(를) 산 진짜 이유는 무엇이었던 것 같아요?",
         choices(
             ("NEED", "필요"),
             ("MOOD", "기분"),
@@ -146,24 +146,24 @@ CATALOG = (
             ("OTHER", "기타"),
         ),
     ),
-    Template("RECOMMEND", "MOTIVE", "주변에 추천하겠어요?", "주변 사람에게 {item}을 추천하겠어요?", YES_NO),
+    Template("RECOMMEND", "MOTIVE", "주변에 추천하겠어요?", "주변 사람에게 {item}을(를) 추천하겠어요?", YES_NO),
     Template(
         "LONG_USAGE",
         "LONG_TERM",
         "아직 쓰고 있나요?",
-        "{item}을 아직 사용하고 있나요?",
+        "{item}을(를) 아직 사용하고 있나요?",
         choices(
             ("OFTEN", "자주"), ("SOMETIMES", "가끔"), ("UNUSED", "방치 중"), ("DISPOSED", "팔았거나 버림")
         ),
     ),
     Template(
-        "REPURCHASE", "LONG_TERM", "잃어버리면 다시 살 건가요?", "{item}을 잃어버리면 다시 살 건가요?", YES_NO
+        "REPURCHASE", "LONG_TERM", "잃어버리면 다시 살 건가요?", "{item}을(를) 잃어버리면 다시 살 건가요?", YES_NO
     ),
     Template(
         "RESALE_VALUE",
         "LONG_TERM",
         "중고로 판다면 얼마 받을 것 같아요?",
-        "{item}을 지금 중고로 판다면 얼마를 받을 수 있을 것 같아요?",
+        "{item}을(를) 지금 중고로 판다면 얼마를 받을 수 있을 것 같아요?",
         {
             "type": "INTEGER",
             "unit": "KRW",

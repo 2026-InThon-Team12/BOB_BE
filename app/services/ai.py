@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Annotated, Literal
 
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_field, model_validator
 
 from app.core.config import Settings, get_settings
 from app.integrations.lablup import LablupClient, LablupError
@@ -22,6 +22,7 @@ from app.services.cart_thumbnails import encode_thumbnail, thumbnail_box
 from app.services.ocr_layout import visual_lines, word_boxes
 from app.services.price_evidence import read_price_crops, verify_prices
 from app.services.cart_spatial import propose_layout, verify_layout, recover_with_ocr_layout
+from app.services.question_wording import ITEM_PARTICLE_RULE, normalize_item_particle
 
 
 PositivePrice = Annotated[int, Field(strict=True, gt=0, le=1_000_000_000_000)]
@@ -41,6 +42,15 @@ class ItemDraft(BaseModel):
     review_fields: list[str] = Field(default_factory=list)
     verification_notes: list[str] = Field(default_factory=list)
     source_regions: dict[str, list[int]] | None = None
+
+    @model_validator(mode="after")
+    def normalize_question(self):
+        wording = normalize_item_particle(self.supplemental_question, self.name)
+        # Expanding the particle must not break the draft's 300-character contract.
+        self.supplemental_question = (
+            wording if len(wording) <= 300 else default_question(self.category, self.name)
+        )
+        return self
 
     @computed_field
     @property
@@ -102,14 +112,14 @@ class OcrError(RuntimeError):
 
 _CATEGORY_QUESTIONS = {
     Category.DAILY_LIVING: "오늘 {name}이 없어 일상생활에서 불편했던 순간이 있었나요?",
-    Category.CLOTHING: "오늘 외출이나 일상에서 {name}을 착용할 구체적인 상황이 있었나요?",
+    Category.CLOTHING: "오늘 외출이나 일상에서 {name}을(를) 착용할 구체적인 상황이 있었나요?",
     Category.FURNITURE: "오늘 생활 공간에서 {name}이 필요했던 순간이 있었나요?",
     Category.APPLIANCES: "오늘 집안일을 하면서 {name}이 필요했던 순간이 있었나요?",
     Category.DIGITAL: "오늘 하던 작업에서 {name}이 없어 불편했던 순간이 있었나요?",
-    Category.HOBBY: "오늘 취미 활동 중 {name}을 사용할 구체적인 상황이 있었나요?",
-    Category.GAME: "오늘 {name}을 즐길 구체적인 시간이 있었나요?",
+    Category.HOBBY: "오늘 취미 활동 중 {name}을(를) 사용할 구체적인 상황이 있었나요?",
+    Category.GAME: "오늘 {name}을(를) 즐길 구체적인 시간이 있었나요?",
     Category.BEAUTY: "오늘 준비한 일정에서 {name}이 필요했던 순간이 있었나요?",
-    Category.FOOD: "오늘 식사나 간식으로 {name}을 선택할 상황이 있었나요?",
+    Category.FOOD: "오늘 식사나 간식으로 {name}을(를) 선택할 상황이 있었나요?",
     Category.OTHER: "오늘 {name}이 없어 불편했던 순간이 있었나요?",
 }
 
@@ -142,7 +152,7 @@ def _system_prompt() -> str:
         f"Category must be exactly one of: {categories}. "
         "Write one short Korean item-specific question about a concrete situation today where the item would actually have been used, not mere desire or remembering it. It is the ONLY daily question, answered with "
         "있었어요 / 딱히 없었어요 / 잘 모르겠어요. Do not shame or decide whether to purchase. "
-        "Names must be 1-200 characters; questions must be 1-300 characters."
+        "Names must be 1-200 characters; questions must be 1-300 characters." + ITEM_PARTICLE_RULE
     )
 
 
@@ -323,6 +333,7 @@ class AiService:
             "No prices, shipping, coupon amounts, or other cards' details. "
             "category must be one of: " + ", ".join(c.value for c in Category) + ". "
             "supplemental_question: one concrete-use question about display_name, 1-300 Korean chars."
+            + ITEM_PARTICLE_RULE
         )
         content = [
             {

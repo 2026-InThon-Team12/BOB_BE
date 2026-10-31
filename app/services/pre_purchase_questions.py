@@ -9,8 +9,9 @@ from app.services import goal_funding
 from app.core.errors import AppError
 from app.models import Item, Simulation, SimulationQuestion, SimulationQuestionAnswer
 from app.services.finance import active_goal, lock_guest
-from app.services.pre_question_catalog import BY_CODE, CATALOG, VERSION
+from app.services.pre_question_catalog import VERSION
 from app.services.purchase_questions import QuestionAI
+from app.services import swipe_questions as swipe
 
 
 class PreQuestionAI(QuestionAI):
@@ -108,6 +109,7 @@ def context_for(session: Session, simulation: Simulation, today: date) -> dict:
         "category": item.category,
         "price": simulation.price_snapshot,
         "purchase_reasons": item.purchase_reasons or [item.purchase_reason],
+        "reason_other_text": item.reason_other_text,
         "question_date": today.isoformat(),
         "observation_day": dates.index(today) + 1,
         "duration_days": simulation.duration_days,
@@ -121,8 +123,6 @@ def context_for(session: Session, simulation: Simulation, today: date) -> dict:
 
 
 def candidates_for(session: Session, simulation: Simulation, context: dict):
-    if context["is_last_day"] and context["previous_answers"]["forecast"] is None:
-        return [BY_CODE["EXPECTED_USE_DAYS"]]
     history = list(
         session.scalars(
             select(SimulationQuestion)
@@ -130,22 +130,12 @@ def candidates_for(session: Session, simulation: Simulation, context: dict):
             .order_by(SimulationQuestion.question_date.desc())
         )
     )
-    eligible = [
-        row
-        for row in CATALOG
-        if not (row.code == "WORK_VALUE" and context["work_hours_estimate"] is None)
-        and not (row.code == "GOAL_DELAY" and context["goal_delay_days"] is None)
-    ]
-    stages = ("TRIGGER", "NECESSITY", "PREDICTION", "VALUE", "PERSISTENCE")
-    stage = stages[(context["observation_day"] - 1) % len(stages)]
-    candidates = [row for row in eligible if row.stage == stage]
-    recent = {row.template_code for row in history[:2]}
-    candidates = [row for row in candidates if row.code not in recent] or candidates
-    candidates.sort(key=lambda row: (sum(old.template_code == row.code for old in history), row.code))
-    return candidates
+    return swipe.select_question(swipe.PRE_CATALOG, history, context)
 
 
 def reference_text(code: str, context: dict):
+    if code in swipe.PRE_BY_CODE:
+        return swipe.reference_text(code, context)
     if code == "WORK_VALUE":
         return f"계산 기준 시급 {context['hourly_wage']:,}원 기준 약 {context['work_hours_estimate']:g}시간의 근로 소득이에요."
     if code == "GOAL_DELAY":
@@ -188,14 +178,14 @@ def generate_question(session: Session, guest_id: str, simulation_id: str, today
         session.commit()
         return existing
     ensure_active(session, simulation, today)
-    template = BY_CODE[code]
+    template = swipe.PRE_BY_CODE[code]
     context.update(template_original=template.original, reference_text=reference_text(code, context))
     question = SimulationQuestion(
         guest_id=guest_id,
         simulation_id=simulation.id,
         question_date=today,
         template_code=code,
-        template_version=VERSION,
+        template_version=swipe.VERSION,
         stage=template.stage,
         question_text=wording,
         answer_spec=copy.deepcopy(template.answer_spec),
@@ -320,7 +310,7 @@ def adaptive_result(session: Session, simulation: Simulation, today: date) -> di
         if expected is not None
         else "아직 예상 사용일수 답변이 없어요."
     )
-    return {
+    result = {
         "simulation_id": simulation.id,
         "status": status,
         "question_mode": "ADAPTIVE",
@@ -355,6 +345,10 @@ def adaptive_result(session: Session, simulation: Simulation, today: date) -> di
         "prediction_window_days": 30,
         "pre_purchase_baseline": snapshot,
     }
+    reflections = [a.choice_code for q, a in rows if a and q.template_code in swipe.PRE_BY_CODE]
+    if any(q.template_code in swipe.PRE_BY_CODE for q, _ in rows) or not rows:
+        swipe.apply_reflection_result(result, swipe.reflection_counts(reflections))
+    return result
 
 
 def daily_tasks(session: Session, guest_id: str, today: date, include_answered: bool = False):

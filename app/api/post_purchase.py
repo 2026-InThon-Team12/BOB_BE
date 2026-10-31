@@ -19,7 +19,7 @@ from app.services.purchase_questions import (
     save_question_answer,
     usage_statistics,
 )
-from app.services.question_catalog import catalog_output
+from app.services.swipe_questions import catalog_output
 
 router = APIRouter(tags=["purchase questions"])
 DB = Annotated[Session, Depends(get_session)]
@@ -33,7 +33,7 @@ def get_question_ai(settings: Annotated[Settings, Depends(get_settings)]):
 
 @router.get("/question-templates")
 def question_templates():
-    return catalog_output()
+    return catalog_output("post")
 
 
 @router.post("/purchases/{purchase_id}/daily-question", response_model=PurchaseQuestionOutput)

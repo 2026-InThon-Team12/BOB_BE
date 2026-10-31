@@ -169,6 +169,8 @@ class SimulationResult(BaseModel):
     question_mode: Literal["LOCAL", "ADAPTIVE", "LEGACY"] = "LEGACY"
     prediction_window_days: int | None = None
     pre_purchase_baseline: dict | None = None
+    reflection_counts: dict[str, int] | None = None
+    purchase_support_rate: float | None = None
 
 
 class ReviewOutput(BaseModel):
@@ -182,6 +184,7 @@ class ReviewOutput(BaseModel):
 
 
 class PurchaseOutput(BaseModel):
+    question_mode: Literal["LOCAL", "ADAPTIVE", "LEGACY"] = "LEGACY"
     id: str
     item_id: str
     purchased_on: date

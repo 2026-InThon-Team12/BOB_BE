@@ -240,7 +240,7 @@ def test_local_summary_validates_dates_semantics_and_ownership(client, guest_hea
     assert client.post(url, headers=guest_headers, json={"responses": [row, row]}).status_code == 422
 
 
-def test_post_local_non_use_question_uses_review_aggregate(client, guest_headers, today):
+def test_post_local_review_still_generates_a_swipe_reflection(client, guest_headers, today):
     item = register(client, guest_headers).json()["items"][0]
     purchase = client.put(
         f"{P}/items/{item['id']}/decision", headers=guest_headers, json={"decision": "BUY"}
@@ -254,7 +254,8 @@ def test_post_local_non_use_question_uses_review_aggregate(client, guest_headers
     )
     question = client.post(f"{P}/purchases/{purchase['id']}/local-question", headers=guest_headers, json={})
     assert question.status_code == 200
-    assert question.json()["template_code"] == "NON_USE_REASON"
+    assert question.json()["template_code"].startswith("SW_POST_")
+    assert {o["code"] for o in question.json()["answer_spec"]["options"]} == {"YES", "UNSURE", "NO"}
 
 
 def test_summary_model_repair_timeout_and_fallback():

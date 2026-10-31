@@ -222,6 +222,9 @@ def purchase_view(session: Session, purchase: Purchase, today: date) -> dict:
         "estimate_method": "range_midpoint" if review and review.frequency else "exact",
         "verdict": verdict,
         "pre_purchase_baseline": purchase.pre_purchase_snapshot,
+        "question_mode": {"local-v1": "LOCAL", "pre-v1": "ADAPTIVE"}.get(
+            simulation.question_version, "LEGACY"
+        ),
     }
 
 
@@ -336,6 +339,10 @@ def get_today_cards(session: Session, guest_id: str, today: date, include_answer
         .where(Purchase.guest_id == guest_id, Purchase.review_due_on <= today)
         .order_by(Purchase.review_due_on)
     ):
+        simulation = session.scalar(select(Simulation).where(Simulation.item_id == purchase.item_id))
+        if simulation.question_version in ("local-v1", "pre-v1"):
+            # Daily swipe reflections replace the separate multi-choice usage survey.
+            continue
         if not session.scalar(select(PurchaseReview.id).where(PurchaseReview.purchase_id == purchase.id)):
             reviews.append(purchase_view(session, purchase, today))
     counts = {
