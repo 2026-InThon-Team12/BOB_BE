@@ -101,15 +101,26 @@ def test_missing_credentials_keeps_direct_entry_working():
 
 
 def test_ocr_path_sends_only_text_and_preserves_unknown_price():
+    from test_cart_layout import cart_fixture, descriptions
+
     requests = []
 
     def handler(request):
         requests.append(json.loads(request.content))
-        return response_for(proposal(price=None))
+        return response_for(descriptions())
 
     ai = service(handler)
-    ai.ocr = lambda image, config: "left\ttop\ttext\n0\t0\t키보드"
-    result = ai.extract_cart(png_bytes())
+    image, lines = cart_fixture()
+    table = "left\ttop\twidth\theight\tconfidence\ttext\n" + "\n".join(
+        f"{line.left}\t{line.top}\t{line.right - line.left}\t{line.bottom - line.top}\t95\t{line.text}"
+        for line in lines
+        if line.text != "27,5009!"
+    )
+    ai.ocr = lambda *_: table
+    ai.price_reader = lambda *_: ["20,500원"]
+    data = io.BytesIO()
+    image.save(data, format="PNG")
+    result = ai.extract_cart(data.getvalue())
     assert result.analysis_method == "ocr"
     assert result.items[0].price is None
     assert result.items[0].source == ItemSource.SCREENSHOT
@@ -118,6 +129,8 @@ def test_ocr_path_sends_only_text_and_preserves_unknown_price():
 
 
 def test_rejected_vision_request_falls_back_to_ocr():
+    from test_cart_layout import cart_fixture, descriptions
+
     calls = []
 
     def handler(request):
@@ -125,14 +138,34 @@ def test_rejected_vision_request_falls_back_to_ocr():
         calls.append(payload)
         if any(block["type"] == "image" for block in payload["messages"][0]["content"]):
             return httpx.Response(400, json={"error": "image input unsupported"})
-        return response_for(proposal())
+        return response_for(descriptions())
 
     ai = service(handler, lablup_vision_enabled=True)
-    ai.ocr = lambda image, config: "키보드 30000"
-    result = ai.extract_cart(png_bytes())
+    image, lines = cart_fixture()
+    table = "left\ttop\twidth\theight\tconfidence\ttext\n" + "\n".join(
+        f"{line.left}\t{line.top}\t{line.right - line.left}\t{line.bottom - line.top}\t95\t{line.text}"
+        for line in lines
+    )
+    ai.ocr = lambda *_: table
+    ai.price_reader = lambda *_: ["27,500원", "20,500원"]
+    data = io.BytesIO()
+    image.save(data, format="PNG")
+    result = ai.extract_cart(data.getvalue())
     assert result.analysis_method == "ocr"
     assert len(calls) == 2
     assert "VISION_UNAVAILABLE_USING_OCR" in result.warnings
+
+
+@pytest.mark.parametrize("vision", [False, True])
+def test_unknown_selection_never_uses_ai_to_guess_all_products(vision):
+    def handler(request):
+        pytest.fail("Unverified selection must stop before any AI request")
+
+    ai = service(handler, lablup_vision_enabled=vision)
+    ai.ocr = lambda *_: "left\ttop\twidth\theight\tconfidence\ttext\n10\t10\t80\t20\t95\t키보드 30000원"
+    result = ai.extract_cart(png_bytes())
+    assert result.items == []
+    assert result.warnings == ["SELECTION_UNVERIFIED", "RECAPTURE_OR_ENTER_MANUALLY"]
 
 
 def test_timeout_error_does_not_expose_upstream_details_or_secret():

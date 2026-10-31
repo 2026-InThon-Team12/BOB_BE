@@ -1,7 +1,7 @@
 """Detect repeated cart selectors before asking AI to describe individual cards.
 
-This conservative path handles vertical checkbox carts. Other layouts keep the
-generic OCR path. Coordinates and image data remain request-local.
+Controls delimit product cards in vertical lists and equal-width grids.
+Unknown layouts require confirmation. Coordinates remain request-local.
 """
 
 import re
@@ -11,14 +11,17 @@ from statistics import median
 
 from PIL import Image
 
-from app.services.ocr_layout import Line, money_values, normalized
+from app.services.cart_geometry import selectors
+from app.services.ocr_layout import Line, group_words, money_values, normalized
 
 
 @dataclass
 class CartCard:
     lines: list[Line]
     price: int | None
-    selected: bool = True
+    selected: bool | None = True
+    box: tuple[int, int, int, int] | None = None
+    price_evidence: Line | None = None
 
     def literal_title(self) -> str:
         """Keep evidence from this card when AI rewrites or borrows a name."""
@@ -65,67 +68,8 @@ def name_belongs_to_card(name: str, cards: list[CartCard], index: int) -> bool:
     return scores[index] >= 0.75 and scores[index] >= other + 0.15
 
 
-def cart_selectors(image: Image.Image) -> list[tuple[int, bool]]:
-    with image.convert("L") as gray:
-        gray.thumbnail((540, 5000))
-        width, height = gray.size
-        pixels = gray.load()
-        lane = int(width * 0.12)
-        visited: set[tuple[int, int]] = set()
-        boxes = []
-        for y in range(height):
-            for x in range(lane):
-                if (x, y) in visited or pixels[x, y] > 235:
-                    continue
-                stack = [(x, y)]
-                visited.add((x, y))
-                points = []
-                while stack:
-                    a, b = stack.pop()
-                    points.append((a, b))
-                    for c, d in ((a - 1, b), (a + 1, b), (a, b - 1), (a, b + 1)):
-                        if (
-                            0 <= c < lane
-                            and 0 <= d < height
-                            and (c, d) not in visited
-                            and pixels[c, d] <= 235
-                        ):
-                            visited.add((c, d))
-                            stack.append((c, d))
-                left = min(a for a, _ in points)
-                right = max(a for a, _ in points)
-                top = min(b for _, b in points)
-                bottom = max(b for _, b in points)
-                size = right - left + 1
-                if not (width * 0.025 <= size <= width * 0.10 and 0.8 <= size / (bottom - top + 1) <= 1.2):
-                    continue
-                # A selector has four continuous sides; letters/icons do not.
-                inset = max(2, size // 5)
-                sides = [
-                    {b for a, b in points if a <= left + inset},
-                    {b for a, b in points if a >= right - inset},
-                    {a for a, b in points if b <= top + inset},
-                    {a for a, b in points if b >= bottom - inset},
-                ]
-                if min(map(len, sides)) >= size * 0.8:
-                    # Inspect the centre, excluding the empty checkbox's border.
-                    pad = max(2, size // 4)
-                    centre = [
-                        pixels[a, b]
-                        for a in range(left + pad, right - pad + 1)
-                        for b in range(top + pad, bottom - pad + 1)
-                    ]
-                    selected = sum(value < 215 for value in centre) >= len(centre) * 0.12
-                    boxes.append((left, top, size, selected))
-        # Require aligned, equally sized selectors; include checked AND unchecked.
-        if len(boxes) < 2:
-            return []
-        groups = [[b for b in boxes if abs(b[0] - a[0]) <= 3 and abs(b[2] - a[2]) <= 3] for a in boxes]
-        group = max(groups, key=len)
-        if len(group) < 2:
-            return []
-        scale = image.height / height
-        return sorted((round(top * scale), selected) for _, top, _, selected in group)
+def cart_selectors(image: Image.Image) -> list[tuple[int, bool | None]]:
+    return [(box.top, box.selected) for box in selectors(image)]
 
 
 def selector_rows(image: Image.Image) -> list[int]:
@@ -139,9 +83,10 @@ def _crossed_out(line: Line, image: Image.Image) -> bool:
     with image.crop(box).convert("L") as patch:
         w, h = patch.size
         pixels = patch.load()
+        background = median([pixels[0, 0], pixels[w - 1, 0], pixels[0, h - 1], pixels[w - 1, h - 1]])
         # A strike covers most of the price width, unlike individual glyphs.
         return any(
-            sum(pixels[x, y] < 220 for x in range(w)) >= w * 0.85
+            sum(abs(pixels[x, y] - background) > 35 for x in range(w)) >= w * 0.85
             for y in range(h // 4, max(h // 4 + 1, 3 * h // 4))
         )
 
@@ -172,9 +117,14 @@ def horizontal_separators(image: Image.Image) -> list[int]:
 
 def card_price_values(text: str) -> set[int]:
     compact = re.sub(r"\s+", "", text)
+    if re.search(r"[$€¥]|USD|JPY|EUR|CNY|개월", compact, re.IGNORECASE):
+        return set()
     # A price row can include a discount badge and delivery branding. Unit prices,
     # coupon savings and order totals must not compete with the item selling price.
-    if re.search(r"쿠폰|배송비|적립|합계|총|주문|결제|할인됨|할인적용|개당|[gGlL]당", compact):
+    if re.search(
+        r"쿠폰|배송비|적립|합계|총|주문|결제|할인됨|할인적용|개당|[gGlL]당|할부|카드할인|혜택가|회원가|구독",
+        compact,
+    ):
         return set()
     if re.search(r"\(\d+(?:개|g|kg|ml|l)", compact, re.IGNORECASE):
         return set()
@@ -187,55 +137,107 @@ def card_price_values(text: str) -> set[int]:
         amounts.add(int(discounted[1].replace(",", "")))
     if amounts:
         return amounts
-    if re.fullmatch(r"(?:₩\s*)?\d[\d,]*\s*[^\d\s]{0,3}", text.strip()):
+    labelled = re.findall(r"(?<![\d.,])(\d{3,})\s*원", text)
+    if labelled:
+        return {int(value) for value in labelled}
+    if re.fullmatch(r"(?:₩\s*)?\d[\d,]*\s*[^\d\s]{1,3}", text.strip()):
         return money_values(text)
     return set()
 
 
-def checkbox_cards(image: Image.Image, lines: list[Line]) -> list[CartCard]:
-    selectors = cart_selectors(image)
-    starts = [top for top, _ in selectors]
-    if len(starts) < 2:
+def checkbox_cards(image: Image.Image, lines: list[Line], words: list[Line] | None = None) -> list[CartCard]:
+    controls = selectors(image, words if words is not None else lines, word_level=words is not None)
+    if not controls:
         return []
     cards = []
     text_height = median([line.bottom - line.top for line in lines] or [20])
-    separators = horizontal_separators(image)
-    for (start, selected), end in zip(selectors, starts[1:] + [image.height]):
-        if end - start < 4 * text_height:
+    dividers = {}
+    column_lines = {}
+    for control in controls:
+        left, right = control.column_left, control.column_right
+        key = (left, right)
+        if key not in dividers:
+            with image.crop((left, 0, right, image.height)) as column:
+                dividers[key] = horizontal_separators(column)
+            column_lines[key] = (
+                group_words(
+                    [
+                        w
+                        for w in words
+                        if left <= w.left
+                        and w.right <= right
+                        and not any(
+                            c.left <= (w.left + w.right) / 2 <= c.right
+                            and c.top <= (w.top + w.bottom) / 2 <= c.bottom
+                            for c in controls
+                        )
+                    ]
+                )
+                if words is not None
+                else lines
+            )
+        start = control.top
+        end = min(
+            (other.top for other in controls if other.column_left == left and other.top > control.bottom),
+            default=image.height,
+        )
+        if end - start < 2 * text_height:
             continue
-        end = next((y for y in separators if start + 4 * text_height < y < end), end)
-        region = [line for line in lines if start - text_height / 2 <= line.top < end - text_height / 2]
-        if any("전체선택" in normalized(line.text) and line.top < start + 2 * text_height for line in region):
+        end = next((y for y in dividers[key] if start + 3 * text_height < y < end), end)
+        near_header = [
+            line for line in lines if start - text_height / 2 <= line.top < start + 2 * text_height
+        ]
+        if any(
+            re.search(r"전체선택|포인트받기|\d+원적립|쿠폰받기", normalized(line.text))
+            for line in near_header
+        ):
             continue
+        region = [
+            line
+            for line in column_lines[key]
+            if start - text_height / 2 <= line.top < end - text_height / 2
+            and left <= line.left
+            and line.right <= right
+        ]
         footer = next(
             (
                 line.top
                 for line in region
-                if re.search(r"쿠폰선택|총\d+개상품|합계|결제하기|주문하기", normalized(line.text))
+                if re.search(r"쿠폰선택|총\d+개상품|합계|결제하기|주문하기|구매하기", normalized(line.text))
             ),
             end,
         )
         region = [line for line in region if line.top < footer]
         price_lines = []
         for line in region:
-            if line.top < start + text_height:
-                continue
             values = card_price_values(line.text)
             if len(values) == 1 and not _crossed_out(line, image):
                 price_lines.append((line, next(iter(values))))
-        first_price = price_lines[0][0].top if price_lines else end
-        # Ignore thumbnail lettering and lower option/quantity controls in AI names.
+        first_price = min((line.top for line, _ in price_lines), default=end)
         descriptions = [
             line
             for line in region
-            if line.top < min(first_price, start + image.width * 0.22)
-            and line.right > image.width * 0.25
-            and line.left > image.width * 0.12
-            and not re.search(r"^(옵션|한달구매|같은판매자)|도착|주문", normalized(line.text))
+            if line.top <= first_price
+            and len(normalized(line.text)) >= 2
+            and (
+                line.left >= control.right - 2 or line.right <= control.left + 2 or line.top >= control.bottom
+            )
+            and line.bottom - line.top >= text_height * 0.45
+            and not re.search(
+                r"^(옵션|한달구매|같은판매자)|도착|주문|배송|합계|선택삭제", normalized(line.text)
+            )
             and not card_price_values(line.text)
         ]
         if not descriptions:
+            if control.selected is not False:
+                cards.append(CartCard([], None, None, (left, start, right, end)))
             continue
         amounts = {price for _, price in price_lines}
-        cards.append(CartCard(descriptions, next(iter(amounts)) if len(amounts) == 1 else None, selected))
+        price = next(iter(amounts)) if len(amounts) == 1 else None
+        evidence = max(
+            (line for line, value in price_lines if value == price),
+            key=lambda line: line.bottom - line.top,
+            default=None,
+        )
+        cards.append(CartCard(descriptions, price, control.selected, (left, start, right, end), evidence))
     return cards

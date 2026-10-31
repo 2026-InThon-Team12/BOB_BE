@@ -130,9 +130,12 @@ def run_cart(client, selected=(True, True, False)):
     )
     data = io.BytesIO()
     image.save(data, format="PNG")
-    return AiService(Settings(_env_file=None), client=client, ocr=lambda image, settings: table).extract_cart(
-        data.getvalue()
-    )
+    return AiService(
+        Settings(_env_file=None),
+        client=client,
+        ocr=lambda image, settings: table,
+        price_reader=lambda *_: [f"{p}원" for p, chosen in zip((27500, 20500, 29500), selected) if chosen],
+    ).extract_cart(data.getvalue())
 
 
 def test_model_order_cannot_move_price_between_cards():

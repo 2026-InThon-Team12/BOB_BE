@@ -113,6 +113,9 @@ def test_api_proposal_contains_only_selected_product_and_ignores_checkout_total(
     data = io.BytesIO()
     image.save(data, format="PNG")
     result = AiService(
-        Settings(_env_file=None), client=Client(), ocr=lambda image, settings: table
+        Settings(_env_file=None),
+        client=Client(),
+        ocr=lambda image, settings: table,
+        price_reader=lambda *_: ["21,980원"],
     ).extract_cart(data.getvalue())
     assert [(i.name, i.price) for i in result.items] == [("화이트 치아미백제", 21980)]

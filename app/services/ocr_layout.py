@@ -18,7 +18,7 @@ class Line:
     text: str
 
 
-def visual_lines(table: str) -> list[Line]:
+def word_boxes(table: str) -> list[Line]:
     words = []
     for row in table.splitlines()[1:]:
         fields = row.split("\t", 5)
@@ -31,6 +31,14 @@ def visual_lines(table: str) -> list[Line]:
         if min(left, top) < 0 or min(width, height) <= 0 or not fields[5].strip():
             continue
         words.append(Line(left, top, left + width, top + height, fields[5].strip()))
+    return words
+
+
+def visual_lines(table: str) -> list[Line]:
+    return group_words(word_boxes(table))
+
+
+def group_words(words: list[Line]) -> list[Line]:
     rows: list[list[Line]] = []
     for word in sorted(words, key=lambda w: ((w.top + w.bottom) / 2, w.left)):
         row = next(

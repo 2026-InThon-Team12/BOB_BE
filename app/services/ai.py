@@ -16,7 +16,8 @@ from app.core.config import Settings, get_settings
 from app.integrations.lablup import LablupClient, LablupError
 from app.models import Category, ItemSource
 from app.services.cart_layout import CartCard, checkbox_cards, name_belongs_to_card
-from app.services.ocr_layout import grounded_prices, visual_lines
+from app.services.ocr_layout import visual_lines, word_boxes
+from app.services.price_evidence import read_price_crops, verify_prices
 
 
 PositivePrice = Annotated[int, Field(strict=True, gt=0, le=1_000_000_000_000)]
@@ -46,6 +47,7 @@ class DraftAnalysis(BaseModel):
     items: list[ItemDraft] = Field(default_factory=list, max_length=20)
     warnings: list[str] = Field(default_factory=list)
     analysis_method: Literal["text", "vision", "ocr", "manual"]
+    selection_summary: dict[str, int] | None = None
 
 
 class _ProposedItem(BaseModel):
@@ -210,10 +212,12 @@ class AiService:
         settings: Settings,
         client: LablupClient | None = None,
         ocr: Callable[[Image.Image, Settings], str] | None = None,
+        price_reader: Callable[[list[Image.Image], Settings], list[str]] | None = None,
     ):
         self.settings = settings
         self.client = client or LablupClient(settings)
         self.ocr = ocr or extract_ocr
+        self.price_reader = price_reader or read_price_crops
 
     def _propose(self, content: list[dict]) -> list[_ProposedItem]:
         system = _system_prompt()
@@ -350,9 +354,42 @@ class AiService:
         mime, image = validate_image(data, self.settings.max_image_bytes)
         notices = []
         try:
+            text = self.ocr(image, self.settings)
+            lines = visual_lines(text)
+            detected = checkbox_cards(image, lines, word_boxes(text))
+            if not detected or any(card.selected is None for card in detected):
+                return DraftAnalysis(
+                    items=[],
+                    warnings=["SELECTION_UNVERIFIED", "RECAPTURE_OR_ENTER_MANUALLY"],
+                    analysis_method="manual",
+                )
+            cards = [card for card in detected if card.selected is True]
+            summary = {
+                "visible": len(detected),
+                "selected": len(cards),
+                "excluded": len(detected) - len(cards),
+            }
+            if not cards:
+                result = self._cart_result([], "ocr", ["NO_SELECTED_ITEMS"])
+                result.selection_summary = summary
+                return result
+            if len(cards) > 20:
+                return DraftAnalysis(
+                    items=[],
+                    warnings=["TOO_MANY_SELECTED_ITEMS"],
+                    analysis_method="manual",
+                    selection_summary=summary,
+                )
+            if verify_prices(image, cards, self.settings, self.price_reader):
+                notices.append("PRICE_VERIFICATION_FAILED")
+            if any(card.price is None for card in cards):
+                notices.append("REVIEW_PRICES_MANUALLY")
+            proposed = None
+            method = "ocr"
+            fallback_names = set()
             if self.settings.lablup_vision_enabled:
                 try:
-                    proposed = self._propose(
+                    guesses = self._propose(
                         [
                             {
                                 "type": "image",
@@ -364,64 +401,61 @@ class AiService:
                             },
                             {
                                 "type": "text",
-                                "text": "Extract visible cart items. Use null for unclear prices.",
+                                "text": "Describe checked products only. Unclear prices must be null.",
                             },
                         ]
                     )
-                    return self._cart_result(proposed, "vision", notices, image)
+                    proposed = []
+                    method = "vision"
+                    for index, card in enumerate(cards):
+                        matches = [
+                            guess
+                            for guess in guesses
+                            if name_belongs_to_card(guess.name, cards, index)
+                            and sum(name_belongs_to_card(guess.name, cards, i) for i in range(len(cards)))
+                            == 1
+                        ]
+                        if len(matches) == 1:
+                            guess = matches[0]
+                            crop = guess.thumbnail_box
+                            if crop and card.box:
+                                x1, y1, x2, y2 = card.box
+                                if not (
+                                    x1 <= crop[0] * image.width / 1000 < crop[2] * image.width / 1000 <= x2
+                                    and y1
+                                    <= crop[1] * image.height / 1000
+                                    < crop[3] * image.height / 1000
+                                    <= y2
+                                ):
+                                    crop = None
+                            proposed.append(
+                                guess.model_copy(update={"price": card.price, "thumbnail_box": crop})
+                            )
+                        else:
+                            name = card.literal_title()
+                            fallback_names.add(name)
+                            proposed.append(
+                                _ProposedItem(
+                                    name=name,
+                                    price=card.price,
+                                    category=Category.OTHER,
+                                    supplemental_question=default_question(Category.OTHER, name),
+                                )
+                            )
                 except LablupError as exc:
                     if not exc.image_unsupported:
                         raise
                     notices.append("VISION_UNAVAILABLE_USING_OCR")
-            text = self.ocr(image, self.settings)
-            lines = visual_lines(text)
-            cards = checkbox_cards(image, lines)
-            if cards:
-                cards = [card for card in cards if card.selected]
-                if not cards:
-                    return self._cart_result([], "ocr", notices + ["NO_SELECTED_ITEMS"])
-                proposed, fallback_names = self._describe_cards(cards[:20])
-                if fallback_names:
-                    notices.append("REVIEW_OCR_NAMES")
-                result = self._cart_result(proposed, "ocr", notices)
-                for item in result.items:
-                    if item.name in fallback_names:
-                        item.category_source = "FALLBACK"
-                return result
-            layout = (
-                json.dumps(
-                    [
-                        {"line": i, "box": [line.left, line.top, line.right, line.bottom], "text": line.text}
-                        for i, line in enumerate(lines)
-                    ],
-                    ensure_ascii=False,
-                )
-                if lines
-                else text[:40_000]
-            )
-            proposed = self._propose(
-                [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Extract cart items in top-to-bottom screen order from these spatial OCR lines. "
-                            "Each product title must be paired ONLY with its own price within the same card, "
-                            "before the next product title. Never shift prices to the previous or next product. "
-                            "A title wrapping onto several lines is ONE product. Keep columns separate. "
-                            "In shopping carts such as ABLY, shop/brand headings are not product titles; "
-                            "read the product title below its shop heading. A checkbox being off does not "
-                            "transfer that row's price to the previous or next selected row. "
-                            "Use null if the title/price association is uncertain, or if a card is cut off.\n"
-                            + layout
-                        ),
-                    }
-                ]
-            )
-            checked, rejected = grounded_prices([item.model_dump() for item in proposed], lines)
-            proposed = [_ProposedItem.model_validate(item) for item in checked]
-            if rejected:
-                notices.append("REVIEW_NAME_PRICE_PAIRS")
-            return self._cart_result(proposed, "ocr", notices)
+            if proposed is None:
+                proposed, fallback_names = self._describe_cards(cards)
+            if fallback_names:
+                notices.append("REVIEW_OCR_NAMES")
+            result = self._cart_result(proposed, method, notices, image if method == "vision" else None)
+            result.selection_summary = summary
+            for item in result.items:
+                if item.name in fallback_names:
+                    item.category_source = "FALLBACK"
+            return result
         except (LablupError, OcrError) as exc:
             code = exc.code if isinstance(exc, LablupError) else str(exc)
             return DraftAnalysis(

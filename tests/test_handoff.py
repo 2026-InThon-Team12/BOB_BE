@@ -291,33 +291,47 @@ def test_summary_model_repair_timeout_and_fallback():
 
 
 def test_vision_crop_is_product_region_and_ocr_never_guesses_image():
-    image = Image.new("RGB", (100, 100), "red")
+    from test_cart_layout import cart_fixture, descriptions
+
+    image, lines = cart_fixture()
     data = io.BytesIO()
     image.save(data, format="PNG")
+    table = "left\ttop\twidth\theight\tconfidence\ttext\n" + "\n".join(
+        f"{line.left}\t{line.top}\t{line.right - line.left}\t{line.bottom - line.top}\t95\t{line.text}"
+        for line in lines
+    )
 
     class Fake:
         def message(self, **kwargs):
-            return json.dumps(
-                {
-                    "items": [
-                        {
-                            "name": "컵",
-                            "price": 1000,
-                            "category": "DAILY_LIVING",
-                            "supplemental_question": "컵이 필요했나요?",
-                            "thumbnail_box": [0, 0, 500, 500],
-                        }
-                    ]
-                }
-            )
+            if any(block["type"] == "image" for block in kwargs["content"]):
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "name": row["name"],
+                                "price": 999999,
+                                "category": "CLOTHING",
+                                "supplemental_question": "오늘 사용할 상황이 있었나요?",
+                                "thumbnail_box": [120, 180, 300, 240],
+                            }
+                            for row in descriptions()["items"]
+                        ]
+                    }
+                )
+            return json.dumps(descriptions())
 
     config = Settings(_env_file=None, lablup_vision_enabled=True)
-    result = AiService(config, client=Fake()).extract_cart(data.getvalue())
+    ai = AiService(
+        config, client=Fake(), ocr=lambda *_: table, price_reader=lambda *_: ["27,500원", "20,500원"]
+    )
+    result = ai.extract_cart(data.getvalue())
+    assert [item.price for item in result.items] == [27500, 20500]
     crop = result.items[0].image_crop
     with Image.open(io.BytesIO(base64.b64decode(crop["base64"]))) as thumbnail:
-        assert thumbnail.size == (50, 50)
+        assert 0 < thumbnail.width <= 320 and 0 < thumbnail.height <= 320
+    assert result.items[1].image_crop is None  # Cross-card crop from the first product is rejected.
     config.lablup_vision_enabled = False
-    result = AiService(config, client=Fake(), ocr=lambda *_: "컵 1000원").extract_cart(data.getvalue())
+    result = ai.extract_cart(data.getvalue())
     assert result.items[0].image_crop is None and "PRODUCT_IMAGE_UNAVAILABLE" in result.warnings
 
 
