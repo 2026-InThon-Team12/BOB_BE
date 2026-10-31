@@ -16,6 +16,7 @@ from app.core.config import Settings, get_settings
 from app.integrations.lablup import LablupClient, LablupError
 from app.models import Category, ItemSource
 from app.services.cart_layout import CartCard, checkbox_cards, name_belongs_to_card
+from app.services.cart_thumbnails import encode_thumbnail, thumbnail_box
 from app.services.ocr_layout import visual_lines, word_boxes
 from app.services.price_evidence import read_price_crops, verify_prices
 
@@ -451,6 +452,14 @@ class AiService:
             if fallback_names:
                 notices.append("REVIEW_OCR_NAMES")
             result = self._cart_result(proposed, method, notices, image if method == "vision" else None)
+            for item, card in zip(result.items, cards):
+                box = thumbnail_box(image, card, word_boxes(text))
+                if box:
+                    item.image_crop = encode_thumbnail(image, box)
+            if all(item.image_crop is not None for item in result.items):
+                result.warnings = [
+                    warning for warning in result.warnings if warning != "PRODUCT_IMAGE_UNAVAILABLE"
+                ]
             result.selection_summary = summary
             for item in result.items:
                 if item.name in fallback_names:
