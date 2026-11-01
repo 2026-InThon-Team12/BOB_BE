@@ -191,7 +191,7 @@ def generate_question(session: Session, guest_id: str, simulation_id: str, today
         answer_spec=copy.deepcopy(template.answer_spec),
         context_snapshot=context,
         generation_method=method,
-        model_id=ai.settings.lablup_model_id if method == "AI" else None,
+        model_id=ai.settings.ai_model_id if method == "AI" else None,
         fallback_reason=reason,
     )
     session.add(question)

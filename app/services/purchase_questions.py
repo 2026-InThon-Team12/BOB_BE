@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.integrations.lablup import LablupClient, LablupError
+from app.integrations.ai_provider import create_ai_client
 from app.models import Item, Purchase, PurchaseQuestion, PurchaseQuestionAnswer, Simulation
 from app.services.finance import active_goal, lock_guest
 from app.services.question_wording import ITEM_PARTICLE_RULE, normalize_item_particle
@@ -166,7 +167,7 @@ class QuestionAI:
 
     def __init__(self, settings: Settings, client: LablupClient | None = None):
         self.settings = settings
-        self.client = client or LablupClient(settings)
+        self.client = client or create_ai_client(settings)
 
     def adapt(self, candidates, context: dict) -> tuple[str, str, str, str | None]:
         if candidates[0].code in swipe.BY_CODE:

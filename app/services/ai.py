@@ -16,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_fie
 
 from app.core.config import Settings, get_settings
 from app.integrations.lablup import LablupClient, LablupError
+from app.integrations.ai_provider import create_ai_client
+from app.services.direct_cart import extract_direct, original_box
 from app.models import Category, ItemSource
 from app.services.cart_layout import CartCard, checkbox_cards, name_belongs_to_card
 from app.services.cart_thumbnails import encode_thumbnail, thumbnail_box
@@ -66,7 +68,7 @@ class DraftAnalysis(BaseModel):
     analysis_method: Literal["text", "vision", "ocr", "manual"]
     selection_summary: dict[str, int] | None = None
     review_items: list[ItemDraft] = Field(default_factory=list, max_length=30)
-    extraction_strategy: Literal["spatial_ai", "spatial_ocr"] | None = None
+    extraction_strategy: Literal["spatial_ai", "spatial_ocr", "direct_vision"] | None = None
 
 
 class _ProposedItem(BaseModel):
@@ -235,7 +237,7 @@ class AiService:
         price_reader: Callable[[list[Image.Image], Settings], list[str]] | None = None,
     ):
         self.settings = settings
-        self.client = client or LablupClient(settings)
+        self.client = client or create_ai_client(settings)
         self.ocr = ocr or extract_ocr
         self.price_reader = price_reader or read_price_crops
 
@@ -527,7 +529,7 @@ class AiService:
             return result
         method = "ocr"
         try:
-            use_photos = self.settings.lablup_vision_enabled and any(crops)
+            use_photos = self.settings.ai_vision_enabled and any(crops)
             try:
                 proposed, fallback_names = self._describe_cards(cards, crops if use_photos else None)
                 if use_photos:
@@ -565,6 +567,75 @@ class AiService:
         result.extraction_strategy = "spatial_ocr"
         return result
 
+    def _extract_direct_cart(self, image: Image.Image) -> DraftAnalysis:
+        if not self.settings.ai_vision_enabled:
+            raise LablupError("VISION_UNAVAILABLE")
+        proposal, size = extract_direct(
+            image, self.client, self.settings.ai_timeout_seconds, self.settings.direct_cart_output_mode
+        )
+        summary = {
+            "visible": len(proposal.items),
+            "selected": sum(row.selected is True for row in proposal.items),
+            "excluded": sum(row.selected is False for row in proposal.items),
+            "unknown": sum(row.selected is None for row in proposal.items),
+        }
+        if summary["selected"] > 20:
+            return DraftAnalysis(
+                warnings=["TOO_MANY_SELECTED_ITEMS"],
+                analysis_method="manual",
+                selection_summary=summary,
+                extraction_strategy="direct_vision",
+            )
+        items, reviews = [], []
+        for row in proposal.items:
+            if row.selected is False:
+                continue
+            fields = [] if row.selected is True else ["selection"]
+            name = row.name if row.name and len(row.name) <= 200 else None
+            if not name:
+                name = "이름 확인 필요"
+                fields.append("name")
+            price = row.price if row.price is not None and 0 < row.price <= 1_000_000_000_000 else None
+            if price is None:
+                fields.append("price")
+            box = original_box(row.photo_box, size, image.size)
+            crop = encode_thumbnail(image, box) if box else None
+            if crop is None:
+                fields.append("photo")
+            item = ItemDraft(
+                name=name,
+                price=price,
+                category=Category.OTHER,
+                category_source="FALLBACK",
+                supplemental_question=default_question(Category.OTHER, name),
+                source=ItemSource.SCREENSHOT,
+                image_crop=crop,
+                source_regions={"photo": crop["box"]} if crop else None,
+                review_fields=fields,
+                verification_notes=[f"{self.settings.ai_provider.upper()}_DIRECT_VISION"],
+            )
+            (items if row.selected is True else reviews).append(item)
+        notices = ["CONFIRM_EXTRACTED_ITEMS"]
+        if reviews:
+            notices.append("PARTIAL_SELECTION_UNVERIFIED")
+        if not items and not reviews:
+            notices.append("NO_SELECTED_ITEMS")
+        for field, notice in [
+            ("price", "REVIEW_PRICES_MANUALLY"),
+            ("name", "REVIEW_NAMES_MANUALLY"),
+            ("photo", "PRODUCT_IMAGE_UNAVAILABLE"),
+        ]:
+            if any(field in item.review_fields for item in items + reviews):
+                notices.append(notice)
+        return DraftAnalysis(
+            items=items,
+            review_items=reviews,
+            warnings=notices,
+            analysis_method="vision",
+            selection_summary=summary,
+            extraction_strategy="direct_vision",
+        )
+
     def extract_cart(self, data: bytes) -> DraftAnalysis:
         _, image = validate_image(data, self.settings.max_image_bytes)
         notices = []
@@ -572,8 +643,10 @@ class AiService:
         if isinstance(self.client, LablupClient):
             self.client.deadline = time.monotonic() + 80
         try:
+            if self.settings.ai_cart_mode == "direct":
+                return self._extract_direct_cart(image)
             text = self.ocr(image, self.settings)
-            if self.settings.cart_layout_vision_enabled and self.settings.lablup_vision_enabled:
+            if self.settings.cart_layout_vision_enabled and self.settings.ai_vision_enabled:
                 complete = self._complete_ocr_cart(image, text)
                 if complete is not None:
                     cards, crops, summary = complete

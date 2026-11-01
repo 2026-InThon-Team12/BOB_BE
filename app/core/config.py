@@ -13,12 +13,24 @@ class Settings(BaseSettings):
     database_url: str = Field(default="postgresql+psycopg://bob:bob@localhost:5432/bob", repr=False)
     database_pool_mode: Literal["pooled", "null"] = "pooled"
     cors_origins: list[str] = Field(default_factory=list)
+    # Keep bare Settings backward compatible; deployment explicitly selects Claude.
+    ai_provider: Literal["lablup", "claude"] = "lablup"
+    claude_api_key: str | None = Field(
+        default=None, repr=False, validation_alias=AliasChoices("claude_api_key", "anthropic_api_key")
+    )
+    claude_model_id: str = Field(default="claude-sonnet-5-5", min_length=1)
+    claude_vision_enabled: bool = True
+    claude_cart_mode: Literal["direct", "verified"] = "direct"
+    claude_thinking_mode: Literal["between_tools", "disabled", "adaptive", "default"] = "between_tools"
+    claude_effort: Literal["low", "medium", "high", "default"] = "low"
     lablup_api_key: str | None = Field(
         default=None, repr=False, validation_alias=AliasChoices("lablup_api_key", "Lablup")
     )
     lablup_base_url: str = "https://api.console.lablup.ai/anthropic"
     lablup_model_id: str = "DeepSeek-V4.1-Flash-B300"
     lablup_vision_enabled: bool = False
+    lablup_cart_mode: Literal["direct", "verified"] = "verified"
+    direct_cart_output_mode: Literal["schema", "prompt"] = "schema"
     cart_layout_vision_enabled: bool = False
     cart_layout_timeout_seconds: float = Field(default=40, gt=0, le=60)
     ai_timeout_seconds: float = Field(default=30, gt=0, le=120)
@@ -32,6 +44,18 @@ class Settings(BaseSettings):
     cron_secret: str | None = Field(default=None, repr=False, min_length=32)
     notifications_hour: int = Field(default=20, ge=0, le=23)
     notification_poll_seconds: int = Field(default=60, ge=1)
+
+    @property
+    def ai_model_id(self) -> str:
+        return self.claude_model_id if self.ai_provider == "claude" else self.lablup_model_id
+
+    @property
+    def ai_vision_enabled(self) -> bool:
+        return self.claude_vision_enabled if self.ai_provider == "claude" else self.lablup_vision_enabled
+
+    @property
+    def ai_cart_mode(self) -> str:
+        return self.claude_cart_mode if self.ai_provider == "claude" else self.lablup_cart_mode
 
     @field_validator("database_url")
     @classmethod

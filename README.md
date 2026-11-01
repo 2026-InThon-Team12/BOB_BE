@@ -1,5 +1,9 @@
 # BOB Backend
 
+운영 AI는 Claude를 사용하며 장바구니 사진은 OCR 없이 직접 추출합니다.
+질문 유형은 기존 서버 규칙으로 선택하고 Claude는 상품별 문구를 개인화합니다.
+기능별 입력·실패 처리·설정은 [Claude 연결 안내](docs/ai-provider.md)를 확인하세요.
+
 구매 전 예상 사용과 구매 후 실제 사용을 비교하는 FastAPI 백엔드입니다. PostgreSQL에 게스트별 기록을 저장하고, 별도 워커가 Android FCM 묶음 알림을 발송합니다.
 
 최신 `BoB_handoff/FE_SPEC.md`와 화면별 HTML, 이후 사용자가 확정한 로컬 저장·할인 마감일 정책을 반영했습니다. 신규 Android 연동은 [최신 handoff API 계약](docs/handoff-integration.md)을 먼저 확인하세요. 이전 [디자인 반영 내역](docs/design-changes.md)은 기존 데이터의 호환 정책을 설명합니다.

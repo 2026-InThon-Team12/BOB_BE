@@ -1,11 +1,14 @@
-"""Small, bounded Anthropic Messages client for Lablup's gateway only."""
+"""Bounded Messages transport with Lablup defaults and provider-specific hooks."""
 
 from typing import Any
+import logging
 import time
 
 import httpx
 
 from app.core.config import Settings
+
+logger = logging.getLogger("bob.ai")
 
 
 class LablupError(RuntimeError):
@@ -18,10 +21,33 @@ class LablupError(RuntimeError):
 
 
 class LablupClient:
+    provider = "lablup"
+
     def __init__(self, settings: Settings, client: httpx.Client | None = None):
         self.settings = settings
         self._client = client
         self.deadline: float | None = None
+        self.last_metrics: dict[str, Any] = {}
+
+    @property
+    def api_key(self) -> str | None:
+        return self.settings.lablup_api_key
+
+    @property
+    def model_id(self) -> str:
+        return self.settings.lablup_model_id
+
+    @property
+    def endpoint(self) -> str:
+        return self.settings.lablup_base_url.rstrip("/") + "/v1/messages"
+
+    def request_options(self, thinking: bool | None) -> dict[str, Any]:
+        if thinking is None:
+            return {}
+        return {"thinking": {"type": "enabled" if thinking else "disabled"}}
+
+    def image_rejected(self, response: httpx.Response, content: list[dict]) -> bool:
+        return any(block.get("type") == "image" for block in content)
 
     def message(
         self,
@@ -31,26 +57,32 @@ class LablupClient:
         max_tokens: int = 4096,
         thinking: bool | None = None,
         timeout_seconds: float | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
-        if not self.settings.lablup_api_key:
+        self.last_metrics = {"provider": self.provider, "model": self.model_id}
+        if not self.api_key:
             raise LablupError("AI_NOT_CONFIGURED")
         payload = {
-            "model": self.settings.lablup_model_id,
+            "model": self.model_id,
             "max_tokens": max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": content}],
         }
-        if thinking is not None:
-            payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
+        payload.update(self.request_options(thinking))
+        if response_schema is not None:
+            payload.setdefault("output_config", {})["format"] = {
+                "type": "json_schema",
+                "schema": response_schema,
+            }
         headers = {
-            "x-api-key": self.settings.lablup_api_key,
+            "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
-        endpoint = self.settings.lablup_base_url.rstrip("/") + "/v1/messages"
         # Disable redirects so credentials cannot be forwarded to another host.
         own_client = self._client is None
         client = self._client or httpx.Client(follow_redirects=False)
+        started = time.monotonic()
         try:
             timeout = (
                 min(timeout_seconds, 120) if timeout_seconds is not None else self.settings.ai_timeout_seconds
@@ -61,12 +93,13 @@ class LablupClient:
                     raise LablupError("AI_TIMEOUT")
                 timeout = min(timeout, remaining)
             response = client.post(
-                endpoint,
+                self.endpoint,
                 headers=headers,
                 json=payload,
                 timeout=timeout,
                 follow_redirects=False,
             )
+            self.last_metrics["status"] = response.status_code
             if response.status_code in (401, 403):
                 raise LablupError("AI_AUTH_FAILED")
             if response.status_code == 404:
@@ -74,12 +107,17 @@ class LablupClient:
             if response.status_code in (400, 415, 422):
                 raise LablupError(
                     "AI_REQUEST_REJECTED",
-                    image_unsupported=any(block.get("type") == "image" for block in content),
+                    image_unsupported=self.image_rejected(response, content),
                 )
             if not response.is_success:
                 raise LablupError("AI_UNAVAILABLE")
             try:
                 body = response.json()
+                usage = body.get("usage", {})
+                if isinstance(usage, dict):
+                    for field in ("input_tokens", "output_tokens"):
+                        if type(usage.get(field)) is int:
+                            self.last_metrics[field] = usage[field]
                 blocks = body.get("content", [])
                 result = "\n".join(
                     block["text"]
@@ -90,7 +128,7 @@ class LablupClient:
                 )
             except (ValueError, TypeError, AttributeError):
                 raise LablupError("AI_INVALID_RESPONSE") from None
-            if not result and body.get("stop_reason") == "max_tokens":
+            if body.get("stop_reason") == "max_tokens":
                 raise LablupError("AI_OUTPUT_LIMIT")
             if not result or len(result) > 100_000:
                 raise LablupError("AI_INVALID_RESPONSE")
@@ -100,5 +138,8 @@ class LablupClient:
         except httpx.HTTPError:
             raise LablupError("AI_UNAVAILABLE") from None
         finally:
+            self.last_metrics["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+            # Never log prompts, images, upstream error bodies, or credentials.
+            logger.info("ai_request %s", self.last_metrics)
             if own_client:
                 client.close()

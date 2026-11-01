@@ -32,10 +32,18 @@ DB 마이그레이션은 빌드·요청마다 실행하지 않고 배포 전에 
 | `DATABASE_URL` | Neon이 주입한 pooled URL. 표준 `postgresql://`을 psycopg 3으로 자동 변환 |
 | `DATABASE_POOL_MODE` | `null`: 함수 인스턴스에서 유휴 DB 연결을 유지하지 않음 |
 | `ENVIRONMENT` | `production` |
-| `LABLUP_API_KEY` | 서버 전용 Secret. 현재 등록된 `Lablup`도 호환하며 표준 이름이 우선 |
+| `AI_PROVIDER` | `claude`: 연결된 모든 외부 AI 호출의 공급자 |
+| `CLAUDE_API_KEY` | 서버 전용 Secret. Git·프런트·Android에는 넣지 않음 |
+| `CLAUDE_MODEL_ID` | `claude-sonnet-5-5` |
+| `CLAUDE_VISION_ENABLED` | `true` |
+| `CLAUDE_CART_MODE` | `direct`: OCR 없이 이미지 직접 추출 |
+| `CLAUDE_THINKING_MODE` | `between_tools` |
+| `CLAUDE_EFFORT` | `low` |
+| `DIRECT_CART_OUTPUT_MODE` | `schema` |
+| `LABLUP_API_KEY` | 명시적으로 공급자를 바꿀 때만 사용. 기존 `Lablup`도 호환 |
 | `LABLUP_BASE_URL` | `https://api.console.lablup.ai/anthropic` |
 | `LABLUP_MODEL_ID` | `DeepSeek-V4.1-Flash-B300` |
-| `LABLUP_VISION_ENABLED` | `false`: 이미지 지원 미검증이므로 OCR 사용 |
+| `LABLUP_VISION_ENABLED` | Lablup 비교 설정에만 적용. Claude 경로에는 영향 없음 |
 | `OCR_BACKEND` | `python` |
 | `TESSDATA_DIR` | `vendor/tessdata` |
 | `MAX_IMAGE_BYTES` | `4000000` |
@@ -48,6 +56,10 @@ DB 마이그레이션은 빌드·요청마다 실행하지 않고 배포 전에 
 `.env*`, `credentials/`, `.venv/`, `tmp/`는 업로드에서 제외한다.
 
 ## 스크린샷 OCR
+
+현재 운영 Claude 설정은 장바구니·할인 이미지 분석에서 OCR을 실행하지 않습니다.
+아래 OCR 의존성은 이전 공급자의 명시적 비교 경로를 위해 남아 있습니다.
+Claude 호출 실패 시에도 OCR로 전환하지 않습니다. [기능별 AI 경로](ai-provider.md)를 참조하세요.
 
 Vercel에서는 Dockerfile의 OS 패키지 설치를 실행하지 않는다. 대신 native Tesseract를 포함한
 `tesserocr` Linux wheel을 설치하고, 빌드에서 공식 `tessdata_fast`의 `kor`·`eng` 파일을 내려받는다.

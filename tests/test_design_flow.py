@@ -178,14 +178,21 @@ def test_review_day_ranges_report_and_calibration(
     assert report["categories"][0]["overprediction_ratio_estimate"] == (
         round(14 / estimate, 2) if estimate else None
     )
-    # Revisions replace the review rather than increasing the report denominator.
-    assert client.put(url, headers=guest_headers, json={"frequency": "NEVER"}).status_code == 200
+    # The latest one-time review policy accepts an identical retry, not a revision.
+    assert client.put(url, headers=guest_headers, json={"frequency": frequency}).status_code == 200
+    different = "ALMOST_DAILY" if frequency == "NEVER" else "NEVER"
+    assert client.put(url, headers=guest_headers, json={"frequency": different}).status_code == 409
+    unchanged = client.get(P + "/reports?month=2026-11", headers=guest_headers).json()["categories"][0]
+    assert unchanged["actual_days_estimate"] == estimate and unchanged["sample_count"] == 1
     next_item = create_item(client, guest_headers, key="next-review-category")
     today.value += timedelta(days=1)
     cards = client.get(P + "/today", headers=guest_headers).json()["questions"]
     card = next(card for card in cards if card["item_id"] == next_item["id"])
-    assert card["calibration"]["sample_count"] == 1
-    assert "구체적인" in card["question"]
+    if not estimate or 14 / estimate >= 2:
+        assert card["calibration"]["sample_count"] == 1
+        assert "구체적인" in card["question"]
+    else:
+        assert card["calibration"] is None
 
 
 def test_reason_rates_overlap_and_pending_are_not_abandonments(client, guest_headers, today):
