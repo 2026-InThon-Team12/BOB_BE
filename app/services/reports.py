@@ -114,7 +114,8 @@ def category_statistics(session: Session, guest_id: str, today: date, month: str
         measurements.append(
             (
                 item.category,
-                view["expected_days_in_review_window"] if view["comparison_reason"] is None else None,
+                view["expected_days_in_review_window"]
+                if view["comparison_reason"] in (None, "DIFFERENT_OBSERVATION_WINDOWS") else None,
                 view["actual_days_estimate"],
                 view["review"]["min_days"],
                 view["review"]["max_days"],

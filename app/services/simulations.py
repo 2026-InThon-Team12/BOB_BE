@@ -184,11 +184,16 @@ def purchase_view(session: Session, purchase: Purchase, today: date) -> dict:
         result["expected_usage_rate"] * window if result["expected_usage_rate"] is not None else None
     )
     eligible = result["comparison_eligible"] and review is not None and forecast_window == window
+    reason = "REVIEW_REQUIRED" if review is None else result["comparison_reason"]
+    if review is not None and result["comparison_eligible"] and forecast_window != window:
+        reason = "DIFFERENT_OBSERVATION_WINDOWS"
     difference = round((result["expected_usage_rate"] - actual_rate) * 100, 2) if eligible else None
     ratio = round(expected / estimate, 2) if eligible and estimate else None
     verdict = None
     if review:
         verdict = "응답이 부족해 수치 비교는 어려워요. 실제 사용 기록은 저장했어요."
+        if reason == "DIFFERENT_OBSERVATION_WINDOWS":
+            verdict = "관찰 기간이 달라 사용 일수를 각각 보여드려요. 실제 사용 기록은 저장했어요."
         if eligible:
             verdict = (
                 "샀지만 아직 사용하지 않았어요."
@@ -223,7 +228,8 @@ def purchase_view(session: Session, purchase: Purchase, today: date) -> dict:
         "actual_usage_rate": actual_rate,
         "expected_usage_rate": result["expected_usage_rate"],
         "difference_percentage_points": difference,
-        "comparison_reason": result["comparison_reason"] if review else "REVIEW_REQUIRED",
+        "comparison_reason": reason,
+        "comparison_eligible": eligible,
         "review_options": REVIEW_OPTIONS if window == 14 else [],
         "expected_days_in_review_window": expected,
         "prediction_window_days": forecast_window,

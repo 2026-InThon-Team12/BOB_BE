@@ -184,6 +184,7 @@ class ReviewOutput(BaseModel):
 
 
 class PurchaseOutput(BaseModel):
+    comparison_eligible: bool = False
     question_mode: Literal["LOCAL", "ADAPTIVE", "LEGACY"] = "LEGACY"
     id: str
     item_id: str

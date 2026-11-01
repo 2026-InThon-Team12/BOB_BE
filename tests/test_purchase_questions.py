@@ -40,6 +40,10 @@ def test_one_time_usage_review(client, guest_headers, today, local, code, low, h
     review = response.json()["review"]
     assert (review["min_days"], review["max_days"], review["estimated_days"]) == (low, high, (low+high)/2)
     assert review["used_days"] is None
+    restored = client.get(f"{P}/items/{item['id']}", headers=guest_headers).json()["purchase"]
+    assert restored["review"] == review
+    listed = client.get(P + "/items", headers=guest_headers).json()["items"]
+    assert next(row for row in listed if row["id"] == item["id"])["purchase"]["review"] == review
     report = client.get(P + "/reports", headers=guest_headers).json()
     assert len(report["categories"]) == 1
     category = report["categories"][0]

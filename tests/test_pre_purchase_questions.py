@@ -212,12 +212,19 @@ def test_local_summary_counts_yes_as_forecast_days_in_original_window(client, gu
     assert purchase["expected_days_in_review_window"] == 1
     assert purchase["prediction_window_days"] == 3
     today.value += timedelta(days=14)
-    assert client.put(f"{P}/purchases/{purchase['id']}/review", headers=guest_headers, json={"frequency":"DAYS_4_7"}).status_code == 200
+    saved = client.put(f"{P}/purchases/{purchase['id']}/review", headers=guest_headers, json={"frequency":"DAYS_4_7"})
+    assert saved.status_code == 200
+    assert saved.json()["comparison_reason"] == "DIFFERENT_OBSERVATION_WINDOWS"
+    assert not saved.json()["comparison_eligible"]
+    assert "관찰 기간" in saved.json()["verdict"]
+    restored = client.get(f"{P}/items/{item['id']}", headers=guest_headers).json()["purchase"]
+    assert restored == saved.json()
     category = client.get(P + "/reports", headers=guest_headers).json()["categories"][0]
     assert category["predicted_days"] == 1
     assert category["prediction_window_days"] == 3
     assert category["actual_days_estimate"] == 5.5
     assert category["overprediction_ratio_estimate"] is None
+    assert category["status"] == "DIFFERENT_OBSERVATION_WINDOWS"
 
 
 def test_adaptive_summary_does_not_require_a_numeric_forecast(client, guest_headers, today):
