@@ -18,6 +18,7 @@ from app.core.config import Settings, get_settings
 from app.integrations.lablup import LablupClient, LablupError
 from app.integrations.ai_provider import create_ai_client
 from app.services.direct_cart import extract_direct, original_box
+from app.services.category_policy import CATEGORY_RULES
 from app.models import Category, ItemSource
 from app.services.cart_layout import CartCard, checkbox_cards, name_belongs_to_card
 from app.services.cart_thumbnails import encode_thumbnail, thumbnail_box
@@ -154,7 +155,8 @@ def _system_prompt() -> str:
         f"Category must be exactly one of: {categories}. "
         "Write one short Korean item-specific question about a concrete situation today where the item would actually have been used, not mere desire or remembering it. It is the ONLY daily question, answered with "
         "있었어요 / 딱히 없었어요 / 잘 모르겠어요. Do not shame or decide whether to purchase. "
-        "Names must be 1-200 characters; questions must be 1-300 characters." + ITEM_PARTICLE_RULE
+        "Names must be 1-200 characters; questions must be 1-300 characters."
+        + CATEGORY_RULES + ITEM_PARTICLE_RULE
     )
 
 
@@ -602,12 +604,16 @@ class AiService:
             crop = encode_thumbnail(image, box) if box else None
             if crop is None:
                 fields.append("photo")
+            try:
+                category = Category(row.category)
+            except (ValueError, TypeError):
+                category = None
             item = ItemDraft(
                 name=name,
                 price=price,
-                category=Category.OTHER,
-                category_source="FALLBACK",
-                supplemental_question=default_question(Category.OTHER, name),
+                category=category or Category.OTHER,
+                category_source="AI" if category is not None else "FALLBACK",
+                supplemental_question=default_question(category or Category.OTHER, name),
                 source=ItemSource.SCREENSHOT,
                 image_crop=crop,
                 source_regions={"photo": crop["box"]} if crop else None,

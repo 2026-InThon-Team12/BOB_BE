@@ -47,10 +47,11 @@ def run_cart(rows=None, *, reply=None, status=200, vision=True, provider="claude
 
 
 def row(**overrides):
-    return {"selected": True, "name": "상품", "price": 15900, "photo_box": [78, 157, 392, 784], **overrides}
+    return {"selected": True, "name": "상품", "price": 15900, "photo_box": [78, 157, 392, 784],
+            "category": "CLOTHING", **overrides}
 
 
-def test_direct_cart_one_request_four_fields_without_ocr():
+def test_direct_cart_classifies_in_the_same_request_without_ocr():
     result, calls = run_cart([
         row(name="빨간 가방"),
         row(selected=False, name="선택하지 않은 상품"),
@@ -63,7 +64,7 @@ def test_direct_cart_one_request_four_fields_without_ocr():
     assert result.review_items[0].review_fields == ["selection"]
     item = result.items[0]
     assert item.price == 15900
-    assert item.category == Category.OTHER and item.category_source == "FALLBACK"
+    assert item.category == Category.CLOTHING and item.category_source == "AI"
     assert item.supplemental_question
     assert item.image_crop["box"] == [99, 100, 500, 500]
     with Image.open(io.BytesIO(base64.b64decode(item.image_crop["base64"]))) as crop:
@@ -72,11 +73,33 @@ def test_direct_cart_one_request_four_fields_without_ocr():
     payload = calls[0]
     assert payload["output_config"]["effort"] == "low"
     schema = payload["output_config"]["format"]["schema"]
-    assert set(schema["properties"]["items"]["items"]["properties"]) == {"selected", "name", "price", "photo_box"}
+    assert set(schema["properties"]["items"]["items"]["properties"]) == {
+        "selected", "name", "price", "photo_box", "category",
+    }
     content = payload["messages"][0]["content"]
     assert sum(block["type"] == "image" for block in content) == 1
     with Image.open(io.BytesIO(base64.b64decode(content[0]["source"]["data"]))) as sent:
         assert sent.size == (784, 1568)
+
+
+def test_mixed_cart_keeps_each_category_without_extra_classification_requests():
+    result, calls = run_cart([
+        row(name="니트", category="CLOTHING"),
+        row(name="딸기 우유", category="FOOD"),
+        row(name="태블릿 보호필름", category="DIGITAL"),
+    ])
+    assert len(calls) == 1
+    assert [item.category for item in result.items] == [Category.CLOTHING, Category.FOOD, Category.DIGITAL]
+    assert all(item.category_source == "AI" for item in result.items)
+
+
+@pytest.mark.parametrize("category", [None, "INVALID"])
+def test_unknown_category_preserves_extraction_for_client_classification(category):
+    result, calls = run_cart([row(category=category)])
+    assert len(calls) == 1
+    item = result.items[0]
+    assert item.category == Category.OTHER and item.category_source == "FALLBACK"
+    assert item.price == 15900 and item.image_crop
 
 
 @pytest.mark.parametrize("size", [(4000, 4000), (1920, 1080), (1080, 2504), (100, 100), (1, 9000)])
